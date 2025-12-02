@@ -50,6 +50,26 @@
     <div id="confetti-container"></div>
 
     <script type="module">
+        /*
+         * PUZZLE NEXUS - Cross-Device Multiplayer Puzzle Game
+         * 
+         * Features:
+         * - 30 unique puzzles with 10 stages each (20 levels per stage)
+         * - Sequential Memory Matrix game with progressive difficulty
+         * - Star rating system (1-3 stars based on performance)
+         * - Cross-device multiplayer using persistent storage
+         * - Real-time chat in multiplayer rooms
+         * - Auto-refreshing lobby (updates every 2 seconds)
+         * - Progress tracking per user
+         * - Level unlocking system
+         * 
+         * How to play multiplayer:
+         * 1. Create a room and get a 4-letter code
+         * 2. Share the code with friends
+         * 3. They can join from ANY device by entering the code
+         * 4. Chat and compete together!
+         */
+
         // GAME CONSTANTS
         const TOTAL_PUZZLES = 30;
         const STAGES_PER_PUZZLE = 10;
@@ -66,17 +86,29 @@
             "Stirling Numbers Challenge", "The Fifteen Puzzle", "Hidden Path Finder"
         ];
 
-        // LOCAL STORAGE HELPER (Fallback when Firebase not configured)
-        const LocalStore = {
-            get: (key) => {
+        // STORAGE HELPER (Uses Claude's persistent storage for cross-device support)
+        const Store = {
+            get: async (key, shared = false) => {
                 try {
-                    const val = localStorage.getItem(key);
-                    return val ? JSON.parse(val) : null;
+                    const result = await window.storage.get(key, shared);
+                    return result ? JSON.parse(result.value) : null;
                 } catch { return null; }
             },
-            set: (key, val) => {
+            set: async (key, val, shared = false) => {
                 try {
-                    localStorage.setItem(key, JSON.stringify(val));
+                    await window.storage.set(key, JSON.stringify(val), shared);
+                    return true;
+                } catch { return false; }
+            },
+            list: async (prefix, shared = false) => {
+                try {
+                    const result = await window.storage.list(prefix, shared);
+                    return result ? result.keys : [];
+                } catch { return []; }
+            },
+            delete: async (key, shared = false) => {
+                try {
+                    await window.storage.delete(key, shared);
                     return true;
                 } catch { return false; }
             }
@@ -140,8 +172,8 @@
         }
 
         // INITIALIZE USER PROGRESS
-        function initializeProgress() {
-            const saved = LocalStore.get('userProgress');
+        async function initializeProgress() {
+            const saved = await Store.get(`user:${AppState.userId}:progress`);
             if (saved) {
                 AppState.userProgress = saved;
             } else {
@@ -172,23 +204,17 @@
                     }, {}),
                     achievements: []
                 };
-                saveProgress();
+                await saveProgress();
             }
         }
 
-        function saveProgress() {
-            LocalStore.set('userProgress', AppState.userProgress);
+        async function saveProgress() {
+            await Store.set(`user:${AppState.userId}:progress`, AppState.userProgress);
         }
 
-        // MULTIPLAYER (Local Simulation)
+        // MULTIPLAYER SERVICE (Cross-device with shared storage)
         const MultiplayerService = {
-            rooms: LocalStore.get('multiplayerRooms') || [],
-            
-            saveRooms() {
-                LocalStore.set('multiplayerRooms', this.rooms);
-            },
-            
-            createRoom(mode) {
+            async createRoom(mode) {
                 const roomCode = generateRoomCode();
                 const room = {
                     roomCode,
@@ -204,13 +230,12 @@
                     hostId: AppState.userId,
                     chat: []
                 };
-                this.rooms.push(room);
-                this.saveRooms();
+                await Store.set(`room:${roomCode}`, room, true); // shared=true for cross-device
                 return room;
             },
             
-            joinRoom(code) {
-                const room = this.rooms.find(r => r.roomCode === code);
+            async joinRoom(code) {
+                const room = await Store.get(`room:${code}`, true);
                 if (!room) return 'ROOM_NOT_FOUND';
                 if (room.status !== 'waiting') return 'GAME_IN_PROGRESS';
                 
@@ -222,13 +247,13 @@
                         status: 'ready',
                         score: 0
                     });
-                    this.saveRooms();
+                    await Store.set(`room:${code}`, room, true);
                 }
                 return room;
             },
             
-            sendMessage(code, message) {
-                const room = this.rooms.find(r => r.roomCode === code);
+            async sendMessage(code, message) {
+                const room = await Store.get(`room:${code}`, true);
                 if (room) {
                     room.chat.push({
                         senderId: AppState.userId,
@@ -236,34 +261,84 @@
                         text: message,
                         timestamp: Date.now()
                     });
-                    this.saveRooms();
+                    await Store.set(`room:${code}`, room, true);
                 }
             },
             
-            getActiveRooms() {
-                return this.rooms.filter(r => r.status === 'waiting');
+            async getActiveRooms() {
+                const keys = await Store.list('room:', true);
+                const rooms = [];
+                for (const key of keys) {
+                    const room = await Store.get(key, true);
+                    if (room && room.status === 'waiting') {
+                        rooms.push(room);
+                    }
+                }
+                return rooms;
+            },
+            
+            async getRoom(code) {
+                return await Store.get(`room:${code}`, true);
             }
         };
 
         // INIT APP
         async function initApp() {
             // Generate user ID
-            let userId = LocalStore.get('userId');
+            let userId = localStorage.getItem('userId');
             if (!userId) {
                 userId = 'user_' + Math.random().toString(36).substring(2, 11);
-                LocalStore.set('userId', userId);
+                localStorage.setItem('userId', userId);
             }
             AppState.userId = userId;
             
             // Initialize progress
-            initializeProgress();
+            await initializeProgress();
             
             // Load rooms
-            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            AppState.activeRooms = await MultiplayerService.getActiveRooms();
             
             // Ready to render
             AppState.currentPage = 'home';
             renderApp();
+            
+            // Start polling for room updates if in a room
+            startRoomPolling();
+        }
+
+        // Poll for room updates (for real-time multiplayer feel)
+        let roomPollInterval = null;
+        let lastPlayerCount = 0;
+        
+        function startRoomPolling() {
+            if (roomPollInterval) clearInterval(roomPollInterval);
+            
+            roomPollInterval = setInterval(async () => {
+                if (AppState.currentRoom) {
+                    const updated = await MultiplayerService.getRoom(AppState.currentRoom.roomCode);
+                    if (updated) {
+                        // Check if new player joined
+                        if (updated.players.length > lastPlayerCount && lastPlayerCount > 0) {
+                            const newPlayer = updated.players[updated.players.length - 1];
+                            if (newPlayer.id !== AppState.userId) {
+                                showMessage(`${newPlayer.name} joined the room!`, '👋 New Player');
+                            }
+                        }
+                        lastPlayerCount = updated.players.length;
+                        AppState.currentRoom = updated;
+                        if (AppState.currentPage === 'lobby') renderApp();
+                    } else {
+                        // Room was deleted
+                        AppState.currentRoom = null;
+                        showMessage('Room was closed by host', 'Room Closed');
+                        window.navTo('lobby');
+                    }
+                }
+                if (AppState.currentPage === 'lobby' && !AppState.currentRoom) {
+                    AppState.activeRooms = await MultiplayerService.getActiveRooms();
+                    renderApp();
+                }
+            }, 2000); // Poll every 2 seconds
         }
 
         // RENDER FUNCTIONS
@@ -510,27 +585,36 @@
                         <button onclick="window.leaveRoom()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
                             <i class="fa-solid fa-arrow-left mr-2"></i> Leave Room
                         </button>
-                        <h1 class="text-4xl font-extrabold text-teal-400 mb-2">Room: ${r.roomCode}</h1>
-                        <p class="text-gray-400 mb-6">Mode: ${r.mode} | Status: ${r.status}</p>
+                        <div class="flex items-center justify-between mb-2">
+                            <h1 class="text-4xl font-extrabold text-teal-400">Room: ${r.roomCode}</h1>
+                            <button onclick="window.copyRoomCode('${r.roomCode}')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+                                <i class="fa-solid fa-copy"></i> Copy Code
+                            </button>
+                        </div>
+                        <p class="text-gray-400 mb-2">Mode: ${r.mode} | Status: ${r.status}</p>
+                        <p class="text-xs text-teal-400 mb-6 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                            Updates every 2 seconds
+                        </p>
 
                         <div class="grid md:grid-cols-2 gap-6">
                             <div class="bg-gray-800 p-6 rounded-xl">
-                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players</h3>
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players (${r.players.length})</h3>
                                 <div class="space-y-2">
                                     ${r.players.map(p => `
-                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50' : 'bg-gray-700'}">
+                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50 ring-1 ring-teal-500' : 'bg-gray-700'}">
                                             <div class="w-2 h-2 rounded-full mr-2 ${p.status === 'ready' ? 'bg-green-500' : 'bg-red-500'}"></div>
-                                            <span>${p.name}</span>
+                                            <span>${p.name}${p.id === AppState.userId ? ' (You)' : ''}</span>
                                             <span class="ml-auto text-sm text-gray-400">${p.score} pts</span>
                                         </div>
                                     `).join('')}
                                 </div>
                             </div>
 
-                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-80">
+                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-96">
                                 <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Chat</h3>
                                 <div id="chat-box" class="flex-1 overflow-y-auto mb-2 space-y-2 p-2 bg-gray-900 rounded">
-                                    ${r.chat.map(msg => `
+                                    ${r.chat.length === 0 ? '<p class="text-gray-500 text-sm text-center mt-4">No messages yet...</p>' : r.chat.map(msg => `
                                         <div class="text-sm ${msg.senderId === AppState.userId ? 'text-right' : 'text-left'}">
                                             <span class="inline-block px-2 py-1 rounded ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
                                                 <b>${msg.senderName}:</b> ${msg.text}
@@ -539,8 +623,8 @@
                                     `).join('')}
                                 </div>
                                 <form onsubmit="window.sendChat(event)" class="flex">
-                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type..." required>
-                                    <button type="submit" class="bg-gold-600 px-4 rounded-r font-bold text-gray-900">Send</button>
+                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type a message..." required>
+                                    <button type="submit" class="bg-gold-600 hover:bg-gold-700 px-4 rounded-r font-bold text-gray-900">Send</button>
                                 </form>
                             </div>
                         </div>
@@ -549,7 +633,11 @@
             } else {
                 return `
                     <div class="max-w-6xl mx-auto px-4 py-10 w-full">
-                        <h1 class="text-4xl font-extrabold text-white mb-6">Multiplayer Lobby</h1>
+                        <h1 class="text-4xl font-extrabold text-white mb-2">Multiplayer Lobby</h1>
+                        <p class="text-sm text-teal-400 mb-6 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                            Cross-device multiplayer enabled • Rooms auto-refresh
+                        </p>
                         
                         <div class="bg-gray-800 p-6 rounded-xl mb-8 border border-gold-600/50 shadow-lg">
                             <h2 class="text-2xl font-bold text-gold-400 mb-4">Create or Join</h2>
@@ -561,6 +649,7 @@
                                 <input id="room-code-input" type="text" maxlength="4" placeholder="Enter 4-Letter Code" class="flex-1 bg-gray-700 rounded px-4 py-2 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none">
                                 <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-6 rounded">Join</button>
                             </div>
+                            <p class="text-xs text-gray-500 mt-3">💡 Share the room code with friends on other devices to play together!</p>
                         </div>
 
                         <h2 class="text-2xl font-bold mb-4">Active Public Rooms</h2>
@@ -571,6 +660,7 @@
                                         <div>
                                             <span class="text-teal-400 font-bold text-lg mr-2">${r.roomCode}</span>
                                             <span class="text-gray-400 text-sm">${r.mode}</span>
+                                            <span class="text-gray-500 text-xs ml-2">(${r.players.length} player${r.players.length > 1 ? 's' : ''})</span>
                                         </div>
                                         <button onclick="window.joinRoom('${r.roomCode}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm">Join</button>
                                     </div>
@@ -634,15 +724,18 @@
             
             if (AppState.currentPage === 'lobby' && AppState.currentRoom) {
                 const box = document.getElementById('chat-box');
-                if(box) box.scrollTop = box.scrollHeight;
+                if(box) {
+                    // Scroll to bottom smoothly
+                    setTimeout(() => box.scrollTop = box.scrollHeight, 100);
+                }
             }
         }
 
         // ACTION HANDLERS
-        window.navTo = (page) => { 
+        window.navTo = async (page) => { 
             AppState.currentPage = page; 
             if (page === 'lobby') {
-                AppState.activeRooms = MultiplayerService.getActiveRooms();
+                AppState.activeRooms = await MultiplayerService.getActiveRooms();
             }
             renderApp(); 
         };
@@ -659,8 +752,10 @@
             renderApp(); 
         };
 
-        window.resetProgress = () => {
-            if (confirm('Are you sure you want to reset all progress?')) {
+        window.resetProgress = async () => {
+            if (confirm('⚠️ This will delete ALL your progress and data. Continue?')) {
+                // Clear user progress
+                await Store.delete(`user:${AppState.userId}:progress`);
                 localStorage.clear();
                 location.reload();
             }
@@ -740,7 +835,7 @@
             completePuzzle();
         };
 
-        function completePuzzle() {
+        async function completePuzzle() {
             AppState.puzzleState.isSolved = true;
             clearInterval(AppState.puzzleState.timerInterval);
             showConfetti();
@@ -779,47 +874,60 @@
                 }
             }
             
-            saveProgress();
+            await saveProgress();
             showMessage(`Solved in ${time}s with ${mistakes} mistakes! Score: ${Math.round(score)}`, 'Victory!');
             renderApp();
         }
 
         // MULTIPLAYER
-        window.createRoom = (mode) => {
-            const room = MultiplayerService.createRoom(mode);
+        window.createRoom = async (mode) => {
+            const room = await MultiplayerService.createRoom(mode);
             AppState.currentRoom = room;
-            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            lastPlayerCount = room.players.length;
+            AppState.activeRooms = await MultiplayerService.getActiveRooms();
+            showMessage(`Room created! Code: ${room.roomCode}`, '🎮 Room Ready');
             renderApp();
         };
 
-        window.joinRoom = (code) => {
-            const res = MultiplayerService.joinRoom(code);
+        window.joinRoom = async (code) => {
+            const res = await MultiplayerService.joinRoom(code);
             if (typeof res === 'string') {
-                showMessage(res.replace(/_/g, ' '), 'Error');
+                showMessage(res.replace(/_/g, ' '), '❌ Error');
             } else {
                 AppState.currentRoom = res;
+                lastPlayerCount = res.players.length;
+                showMessage(`Joined room ${code}!`, '✅ Connected');
                 renderApp();
             }
         };
 
-        window.joinRoomByInput = () => {
+        window.joinRoomByInput = async () => {
             const val = document.getElementById('room-code-input').value.toUpperCase();
-            if(val.length === 4) window.joinRoom(val);
+            if(val.length === 4) await window.joinRoom(val);
         };
 
-        window.leaveRoom = () => {
+        window.leaveRoom = async () => {
             AppState.currentRoom = null;
-            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            lastPlayerCount = 0;
+            AppState.activeRooms = await MultiplayerService.getActiveRooms();
             renderApp();
         };
 
-        window.sendChat = (e) => {
+        window.copyRoomCode = (code) => {
+            navigator.clipboard.writeText(code).then(() => {
+                showMessage('Room code copied to clipboard!', '📋 Copied');
+            }).catch(() => {
+                showMessage(`Room code: ${code}`, 'Copy Failed');
+            });
+        };
+
+        window.sendChat = async (e) => {
             e.preventDefault();
             const input = document.getElementById('chat-input');
             const msg = input.value;
             if(msg.trim()) {
-                MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
-                AppState.currentRoom = MultiplayerService.rooms.find(r => r.roomCode === AppState.currentRoom.roomCode);
+                await MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
+                AppState.currentRoom = await MultiplayerService.getRoom(AppState.currentRoom.roomCode);
                 input.value = '';
                 renderApp();
             }
