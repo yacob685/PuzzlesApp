@@ -307,6 +307,7 @@
         }
 
         // Poll for room updates (for real-time multiplayer feel)
+     // Poll for room updates (for real-time multiplayer feel)
         let roomPollInterval = null;
         let lastPlayerCount = 0;
         
@@ -327,12 +328,8 @@
                         lastPlayerCount = updated.players.length;
                         AppState.currentRoom = updated;
                         if (AppState.currentPage === 'lobby') renderApp();
-                    } else {
-                        // Room was deleted
-                        AppState.currentRoom = null;
-                        showMessage('Room was closed by host', 'Room Closed');
-                        window.navTo('lobby');
                     }
+                    // Note: Room not being found doesn't mean it was deleted, could be a storage error
                 }
                 if (AppState.currentPage === 'lobby' && !AppState.currentRoom) {
                     AppState.activeRooms = await MultiplayerService.getActiveRooms();
@@ -340,7 +337,6 @@
                 }
             }, 2000); // Poll every 2 seconds
         }
-
         // RENDER FUNCTIONS
         function renderHeader() {
             const pages = [
