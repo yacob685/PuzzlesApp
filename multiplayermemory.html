@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puzzle Nexus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        .text-gold-400 { color: #FFD700; }
+        .bg-gold-600 { background-color: #FFC72C; }
+        .hover\:bg-gold-700:hover { background-color: #FFB300; }
+        .shadow-gold-500\/50 { box-shadow: 0 10px 15px -3px rgba(255, 199, 44, 0.5), 0 4px 6px -4px rgba(255, 199, 44, 0.5); }
+        
+        .shadow-rainbow {
+            box-shadow: 
+                0 0 10px rgba(0, 255, 255, 0.4),
+                0 0 20px rgba(255, 215, 0, 0.4),
+                0 0 30px rgba(255, 0, 255, 0.2);
+        }
+
+        @keyframes fall {
+            0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+        .confetti-piece {
+            position: absolute;
+            animation-name: fall;
+            animation-timing-function: linear;
+            animation-iteration-count: infinite;
+            border-radius: 50%;
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
+
+    <div id="app" class="min-h-screen flex flex-col">
+        <div class="flex items-center justify-center h-screen">
+            <div class="text-xl text-teal-400 animate-pulse">Initializing System...</div>
+        </div>
+    </div>
+
+    <div id="modal-container"></div>
+    <div id="confetti-container"></div>
+
+    <script type="module">
+        // GAME CONSTANTS
+        const TOTAL_PUZZLES = 30;
+        const STAGES_PER_PUZZLE = 10;
+        const LEVELS_PER_STAGE = 20;
+
+        const PUZZLE_NAMES = [
+            "Sequential Memory Matrix", "Ultimate Riddle Challenge", "Three Gods Logic", 
+            "Einstein's Riddle", "Knights & Knaves", "Monty Hall Simulator", 
+            "River Crossing", "Balance Scale Detective", "Logic Grids", "Masyu Loops", 
+            "Nonograms", "Rope Burning Timer", "Light Switch Puzzle", "Smudged Faces", 
+            "Zebra Variants", "Pattern Recognition", "Cryptarithmetic", "Towers of Hanoi", 
+            "Sliding Block Puzzle", "Pentominoes", "Sokoban", "Futoshiki", "Kakuro", 
+            "Skyscrapers", "Hashiwokakero", "Black Box Logic", "Ami-gami", 
+            "Stirling Numbers Challenge", "The Fifteen Puzzle", "Hidden Path Finder"
+        ];
+
+        // LOCAL STORAGE HELPER (Fallback when Firebase not configured)
+        const LocalStore = {
+            get: (key) => {
+                try {
+                    const val = localStorage.getItem(key);
+                    return val ? JSON.parse(val) : null;
+                } catch { return null; }
+            },
+            set: (key, val) => {
+                try {
+                    localStorage.setItem(key, JSON.stringify(val));
+                    return true;
+                } catch { return false; }
+            }
+        };
+
+        // APPLICATION STATE
+        const AppState = {
+            userId: null,
+            currentPage: 'home',
+            selectedPuzzle: null,
+            selectedStage: null,
+            userProgress: null,
+            activeRooms: [],
+            currentRoom: null,
+            useLocalStorage: true, // Flag to use local storage instead of Firebase
+            
+            puzzleState: {
+                timer: 0,
+                isSolved: false,
+                mistakes: 0,
+                currentLevel: 0,
+                matrix: { size: 3, sequence: [], userSequence: [], display: true },
+                timerInterval: null
+            }
+        };
+
+        // UTILITY FUNCTIONS
+        const generateRoomCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+        
+        function showMessage(msg, title = 'Notification') {
+            const modalHtml = `
+                <div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center transition-opacity duration-300">
+                    <div class="bg-gray-700 p-8 rounded-xl shadow-2xl max-w-sm w-full text-center border-t-4 border-teal-500 transform transition duration-300 scale-100">
+                        <h4 class="text-2xl font-bold text-white mb-3">${title}</h4>
+                        <p class="text-gray-300 mb-6">${msg}</p>
+                        <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                            class="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg font-semibold transition duration-300">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = modalHtml;
+        }
+
+        function showConfetti() {
+            const container = document.getElementById('confetti-container');
+            container.innerHTML = `
+                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 50;">
+                    ${Array.from({ length: 50 }).map(() => {
+                        const size = Math.random() * 8 + 3;
+                        const left = Math.random() * 100;
+                        const animDelay = Math.random() * 2;
+                        const duration = Math.random() * 3 + 2;
+                        const color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                        return `<div class="confetti-piece" style="width: ${size}px; height: ${size}px; left: ${left}vw; background-color: ${color}; animation-delay: ${animDelay}s; animation-duration: ${duration}s;"></div>`;
+                    }).join('')}
+                </div>
+            `;
+            setTimeout(() => { container.innerHTML = ''; }, 3000);
+        }
+
+        // INITIALIZE USER PROGRESS
+        function initializeProgress() {
+            const saved = LocalStore.get('userProgress');
+            if (saved) {
+                AppState.userProgress = saved;
+            } else {
+                AppState.userProgress = {
+                    totalCompleted: 0,
+                    puzzles: PUZZLE_NAMES.reduce((acc, name, index) => {
+                        acc[index] = {
+                            name,
+                            currentStage: 0,
+                            currentLevel: 0,
+                            bestTime: 0,
+                            highScore: 0,
+                            levelsCompleted: 0,
+                            stages: Array(STAGES_PER_PUZZLE).fill(0).map(() => ({
+                                levels: Array(LEVELS_PER_STAGE).fill(0).map(() => ({ 
+                                    status: 'locked', 
+                                    score: 0, 
+                                    time: 0,
+                                    stars: 0
+                                }))
+                            }))
+                        };
+                        // Unlock first level of first stage of first puzzle
+                        if (index === 0) {
+                            acc[index].stages[0].levels[0].status = 'unlocked';
+                        }
+                        return acc;
+                    }, {}),
+                    achievements: []
+                };
+                saveProgress();
+            }
+        }
+
+        function saveProgress() {
+            LocalStore.set('userProgress', AppState.userProgress);
+        }
+
+        // MULTIPLAYER (Local Simulation)
+        const MultiplayerService = {
+            rooms: LocalStore.get('multiplayerRooms') || [],
+            
+            saveRooms() {
+                LocalStore.set('multiplayerRooms', this.rooms);
+            },
+            
+            createRoom(mode) {
+                const roomCode = generateRoomCode();
+                const room = {
+                    roomCode,
+                    mode,
+                    createdAt: Date.now(),
+                    status: 'waiting',
+                    players: [{ 
+                        id: AppState.userId, 
+                        name: `Player-${AppState.userId.substring(0, 6)}`, 
+                        status: 'ready', 
+                        score: 0 
+                    }],
+                    hostId: AppState.userId,
+                    chat: []
+                };
+                this.rooms.push(room);
+                this.saveRooms();
+                return room;
+            },
+            
+            joinRoom(code) {
+                const room = this.rooms.find(r => r.roomCode === code);
+                if (!room) return 'ROOM_NOT_FOUND';
+                if (room.status !== 'waiting') return 'GAME_IN_PROGRESS';
+                
+                const playerExists = room.players.some(p => p.id === AppState.userId);
+                if (!playerExists) {
+                    room.players.push({
+                        id: AppState.userId,
+                        name: `Player-${AppState.userId.substring(0, 6)}`,
+                        status: 'ready',
+                        score: 0
+                    });
+                    this.saveRooms();
+                }
+                return room;
+            },
+            
+            sendMessage(code, message) {
+                const room = this.rooms.find(r => r.roomCode === code);
+                if (room) {
+                    room.chat.push({
+                        senderId: AppState.userId,
+                        senderName: `Player-${AppState.userId.substring(0, 6)}`,
+                        text: message,
+                        timestamp: Date.now()
+                    });
+                    this.saveRooms();
+                }
+            },
+            
+            getActiveRooms() {
+                return this.rooms.filter(r => r.status === 'waiting');
+            }
+        };
+
+        // INIT APP
+        async function initApp() {
+            // Generate user ID
+            let userId = LocalStore.get('userId');
+            if (!userId) {
+                userId = 'user_' + Math.random().toString(36).substring(2, 11);
+                LocalStore.set('userId', userId);
+            }
+            AppState.userId = userId;
+            
+            // Initialize progress
+            initializeProgress();
+            
+            // Load rooms
+            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            
+            // Ready to render
+            AppState.currentPage = 'home';
+            renderApp();
+        }
+
+        // RENDER FUNCTIONS
+        function renderHeader() {
+            const pages = [
+                { name: 'Home', key: 'home', icon: 'fa-home' },
+                { name: 'Multiplayer', key: 'lobby', icon: 'fa-globe' },
+                { name: 'Profile', key: 'profile', icon: 'fa-user' },
+            ];
+
+            return `
+                <header class="bg-gray-800 shadow-xl sticky top-0 z-20 border-b border-teal-600/50">
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                        <div class="flex items-center space-x-6">
+                            <button onclick="window.navTo('home')" class="text-2xl sm:text-3xl font-extrabold text-teal-400 hover:text-teal-300 transition duration-300">
+                                PUZZLE NEXUS
+                            </button>
+                            <nav class="hidden md:flex space-x-4">
+                                ${pages.map(page => `
+                                    <button onclick="window.navTo('${page.key}')" 
+                                        class="px-3 py-2 rounded-lg font-medium transition duration-300 flex items-center gap-2 ${AppState.currentPage === page.key ? 'bg-teal-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
+                                        <i class="fa-solid ${page.icon}"></i> ${page.name}
+                                    </button>
+                                `).join('')}
+                            </nav>
+                        </div>
+                        <button onclick="window.resetProgress()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-300 shadow-md">
+                            Reset Data
+                        </button>
+                    </div>
+                </header>
+            `;
+        }
+
+        function renderHome() {
+            const nextPuzzleIndex = Object.keys(AppState.userProgress.puzzles).find(i => {
+                const p = AppState.userProgress.puzzles[i];
+                return p.levelsCompleted < STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+            }) || 0;
+
+            const puzzles = Object.values(AppState.userProgress.puzzles).map((puzzle, index) => {
+                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+                const progress = Math.floor((puzzle.levelsCompleted / totalLevels) * 100);
+                const isNext = parseInt(index) === parseInt(nextPuzzleIndex);
+                
+                return `
+                    <div onclick="window.goToStageSelect(${index})" 
+                        class="bg-gray-800 p-5 rounded-xl cursor-pointer transition transform duration-300 hover:scale-[1.03] ${isNext ? 'shadow-lg shadow-teal-400/50 ring-2 ring-teal-400' : 'hover:shadow-lg hover:shadow-gold-500/30'}">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-xl font-extrabold ${isNext ? 'text-teal-400' : 'text-white'}">${puzzle.name}</h3>
+                            <div class="text-xs font-semibold px-2 py-1 rounded-full ${progress === 100 ? 'bg-green-600 text-white' : 'bg-gray-700 text-teal-400'}">
+                                ${progress}%
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-400 mb-4">Stage ${puzzle.currentStage + 1}, Level ${puzzle.currentLevel + 1}</p>
+                        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+                            <div class="h-full ${isNext ? 'bg-teal-500' : 'bg-yellow-500'}" style="width: ${progress}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <h1 class="text-5xl font-extrabold text-white mb-4">Welcome Back!</h1>
+                    <p class="text-lg text-gray-400 mb-10">User ID: <span class="text-sm text-gold-400 bg-gray-700 p-1 rounded-md font-mono">${AppState.userId}</span></p>
+
+                    <section class="mb-12 p-6 bg-gray-800 rounded-xl shadow-lg border border-teal-600/50">
+                        <h2 class="text-3xl font-bold text-yellow-400 mb-4">Quick Actions</h2>
+                        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                            <button onclick="window.goToStageSelect(${nextPuzzleIndex})" class="flex-1 py-3 px-6 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg shadow-lg">
+                                Continue Adventure
+                            </button>
+                            <button onclick="window.navTo('lobby')" class="flex-1 py-3 px-6 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg shadow-lg">
+                                Multiplayer Lobby
+                            </button>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h2 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-2">All Puzzles</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            ${puzzles}
+                        </div>
+                    </section>
+                </div>
+            `;
+        }
+
+        function renderStageSelect() {
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            
+            const stagesHtml = puzzle.stages.map((stage, index) => {
+                const isUnlocked = index === 0 || puzzle.stages[index-1].levels.some(l => l.status === 'completed');
+                const completedCount = stage.levels.filter(l => l.status === 'completed').length;
+                const progress = Math.floor((completedCount / LEVELS_PER_STAGE) * 100);
+                
+                return `
+                    <div onclick="${isUnlocked ? `window.goToLevelSelect(${index})` : ''}" 
+                        class="p-5 rounded-xl shadow-lg transition transform duration-300 ${isUnlocked ? 'bg-gray-800 cursor-pointer hover:scale-[1.05] hover:shadow-yellow-500/50' : 'bg-gray-900 opacity-50 cursor-not-allowed'}">
+                        <h3 class="text-2xl font-bold text-gold-400 mb-2">Stage ${index + 1}</h3>
+                        <p class="text-sm text-gray-300">${isUnlocked ? 'Unlocked' : 'Locked'}</p>
+                        <div class="mt-3">
+                            <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
+                                <div class="h-full bg-teal-500" style="width: ${progress}%"></div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">${completedCount}/${LEVELS_PER_STAGE} Done</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <button onclick="window.navTo('home')" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Puzzles
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name}</h1>
+                    <p class="text-lg text-gray-400 mb-8">Select a Stage</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6">
+                        ${stagesHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLevelSelect() {
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            const stage = puzzle.stages[AppState.selectedStage];
+
+            const levelsHtml = stage.levels.map((level, index) => {
+                const isUnlocked = level.status === 'unlocked' || level.status === 'completed';
+                const isCompleted = level.status === 'completed';
+                const isLocked = !isUnlocked;
+                
+                let bgClass = isLocked ? 'bg-gray-900/50 cursor-not-allowed' : isCompleted ? 'bg-green-800/50 hover:bg-green-700/70 cursor-pointer' : 'bg-gray-800 hover:bg-gray-700 cursor-pointer';
+                
+                const starCount = level.stars || 0;
+                const starsHtml = Array(3).fill(0).map((_, i) => 
+                    `<span class="text-lg ${i < starCount ? 'text-yellow-400' : 'text-gray-600'}">★</span>`
+                ).join('');
+
+                return `
+                    <div onclick="${isUnlocked ? `window.startPuzzle(${index})` : ''}" 
+                        class="p-3 rounded-xl shadow-lg transition transform duration-300 text-center ${bgClass}">
+                        <div class="text-xl font-bold mb-1 ${isLocked ? 'text-gray-600' : 'text-white'}">Lvl ${index + 1}</div>
+                        ${isCompleted ? `<div class="flex justify-center">${starsHtml}</div>` : 
+                          isLocked ? '<span class="text-red-500 text-3xl">🔒</span>' : 
+                          '<span class="text-teal-400 text-xl font-bold">PLAY</span>'}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <button onclick="window.goToStageSelect(${AppState.selectedPuzzle})" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Stages
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name} - Stage ${AppState.selectedStage + 1}</h1>
+                    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4 mt-8">
+                        ${levelsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPuzzle() {
+            const puzzleName = PUZZLE_NAMES[AppState.selectedPuzzle];
+            const { timer, mistakes, isSolved, matrix } = AppState.puzzleState;
+            
+            let gridHtml = '';
+            if (puzzleName === 'Sequential Memory Matrix') {
+                const { size, sequence, userSequence, display } = matrix;
+                const cells = [];
+                
+                for(let r=0; r<size; r++) {
+                    for(let c=0; c<size; c++) {
+                        const pos = `${r}-${c}`;
+                        const isInSequence = sequence.includes(pos);
+                        const isClicked = userSequence.includes(pos);
+                        
+                        let cellClass = 'w-12 h-12 sm:w-16 sm:h-16 rounded-lg border-2 flex items-center justify-center font-bold text-xl ';
+                        
+                        if (display) {
+                            cellClass += isInSequence ? 'bg-teal-500 border-teal-400' : 'bg-gray-800 border-gray-700';
+                        } else if (isSolved) {
+                            cellClass += isInSequence ? 'bg-green-500 border-green-400' : 'bg-gray-800 border-gray-700';
+                        } else {
+                            cellClass += isClicked ? 'bg-yellow-500 border-yellow-400' : 'bg-gray-800 border-gray-700 hover:bg-gray-600 cursor-pointer';
+                        }
+                        
+                        cells.push(`<div onclick="window.handleGameClick(${r}, ${c})" class="${cellClass}">${isClicked ? '✓' : ''}</div>`);
+                    }
+                }
+                
+                gridHtml = `
+                    <div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">
+                        ${cells.join('')}
+                    </div>
+                `;
+            } else {
+                gridHtml = `
+                    <div class="text-center p-10 bg-gray-800 rounded-xl">
+                        <p class="mb-4">Simulation placeholder for <b>${puzzleName}</b>.</p>
+                        <button onclick="window.solvePuzzleSim()" class="bg-green-600 text-white px-4 py-2 rounded">Simulate Win</button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="max-w-4xl mx-auto px-4 py-10 w-full text-center">
+                    <button onclick="window.exitPuzzle()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Exit Level
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-6">${puzzleName}</h1>
+                    
+                    <div class="flex justify-between items-center mb-8 p-4 bg-gray-800 rounded-xl shadow-inner max-w-lg mx-auto">
+                        <div class="text-center w-1/3">
+                            <p class="text-xs text-gray-400 uppercase">Time</p>
+                            <p id="timer-display" class="text-3xl font-bold text-white">${timer}s</p>
+                        </div>
+                        <div class="text-center w-1/3 border-l border-r border-gray-700">
+                            <p class="text-xs text-gray-400 uppercase">Mistakes</p>
+                            <p class="text-3xl font-bold text-red-400">${mistakes}</p>
+                        </div>
+                        <div class="text-center w-1/3">
+                            <p class="text-xs text-gray-400 uppercase">Status</p>
+                            <p class="text-xl font-bold ${isSolved ? 'text-green-400' : 'text-teal-400'}">
+                                ${isSolved ? 'SOLVED' : matrix.display ? 'MEMORIZE' : 'PLAY'}
+                            </p>
+                        </div>
+                    </div>
+
+                    ${gridHtml}
+                </div>
+            `;
+        }
+        
+        function renderLobby() {
+            if (AppState.currentRoom) {
+                const r = AppState.currentRoom;
+                return `
+                    <div class="max-w-4xl mx-auto px-4 py-10 w-full">
+                        <button onclick="window.leaveRoom()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                            <i class="fa-solid fa-arrow-left mr-2"></i> Leave Room
+                        </button>
+                        <h1 class="text-4xl font-extrabold text-teal-400 mb-2">Room: ${r.roomCode}</h1>
+                        <p class="text-gray-400 mb-6">Mode: ${r.mode} | Status: ${r.status}</p>
+
+                        <div class="grid md:grid-cols-2 gap-6">
+                            <div class="bg-gray-800 p-6 rounded-xl">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players</h3>
+                                <div class="space-y-2">
+                                    ${r.players.map(p => `
+                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50' : 'bg-gray-700'}">
+                                            <div class="w-2 h-2 rounded-full mr-2 ${p.status === 'ready' ? 'bg-green-500' : 'bg-red-500'}"></div>
+                                            <span>${p.name}</span>
+                                            <span class="ml-auto text-sm text-gray-400">${p.score} pts</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-80">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Chat</h3>
+                                <div id="chat-box" class="flex-1 overflow-y-auto mb-2 space-y-2 p-2 bg-gray-900 rounded">
+                                    ${r.chat.map(msg => `
+                                        <div class="text-sm ${msg.senderId === AppState.userId ? 'text-right' : 'text-left'}">
+                                            <span class="inline-block px-2 py-1 rounded ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
+                                                <b>${msg.senderName}:</b> ${msg.text}
+                                            </span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <form onsubmit="window.sendChat(event)" class="flex">
+                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type..." required>
+                                    <button type="submit" class="bg-gold-600 px-4 rounded-r font-bold text-gray-900">Send</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="max-w-6xl mx-auto px-4 py-10 w-full">
+                        <h1 class="text-4xl font-extrabold text-white mb-6">Multiplayer Lobby</h1>
+                        
+                        <div class="bg-gray-800 p-6 rounded-xl mb-8 border border-gold-600/50 shadow-lg">
+                            <h2 class="text-2xl font-bold text-gold-400 mb-4">Create or Join</h2>
+                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                                <button onclick="window.createRoom('1v1')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 1v1</button>
+                                <button onclick="window.createRoom('2v2')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 2v2</button>
+                            </div>
+                            <div class="flex gap-2">
+                                <input id="room-code-input" type="text" maxlength="4" placeholder="Enter 4-Letter Code" class="flex-1 bg-gray-700 rounded px-4 py-2 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none">
+                                <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-6 rounded">Join</button>
+                            </div>
+                        </div>
+
+                        <h2 class="text-2xl font-bold mb-4">Active Public Rooms</h2>
+                        <div class="space-y-3">
+                            ${AppState.activeRooms.length === 0 ? '<p class="text-gray-500">No active rooms found. Create one!</p>' : 
+                                AppState.activeRooms.map(r => `
+                                    <div class="flex justify-between items-center p-4 bg-gray-800 rounded hover:bg-gray-700 transition">
+                                        <div>
+                                            <span class="text-teal-400 font-bold text-lg mr-2">${r.roomCode}</span>
+                                            <span class="text-gray-400 text-sm">${r.mode}</span>
+                                        </div>
+                                        <button onclick="window.joinRoom('${r.roomCode}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm">Join</button>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        function renderProfile() {
+            const completed = Object.values(AppState.userProgress.puzzles).filter(p => {
+                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+                return p.levelsCompleted === totalLevels;
+            }).length;
+            
+            return `
+                <div class="max-w-6xl mx-auto px-4 py-10 w-full">
+                    <h1 class="text-4xl font-extrabold text-teal-400 mb-2">Profile</h1>
+                    <p class="text-xl text-gray-400 mb-8">User: <span class="text-gold-400">${AppState.userId}</span></p>
+
+                    <div class="grid md:grid-cols-3 gap-6 mb-8">
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-teal-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Puzzles Mastered</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${completed} / ${TOTAL_PUZZLES}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-yellow-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Total Levels Completed</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.totalCompleted}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-red-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Achievements</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.achievements.length}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderApp() {
+            const app = document.getElementById('app');
+            app.innerHTML = '';
+            
+            app.innerHTML += renderHeader();
+
+            let contentHtml = '';
+            switch(AppState.currentPage) {
+                case 'home': contentHtml = renderHome(); break;
+                case 'stageSelect': contentHtml = renderStageSelect(); break;
+                case 'levelSelect': contentHtml = renderLevelSelect(); break;
+                case 'puzzle': contentHtml = renderPuzzle(); break;
+                case 'lobby': contentHtml = renderLobby(); break;
+                case 'profile': contentHtml = renderProfile(); break;
+                default: contentHtml = renderHome(); break;
+            }
+            
+            const main = document.createElement('main');
+            main.className = 'flex-grow';
+            main.innerHTML = contentHtml;
+            app.appendChild(main);
+            
+            if (AppState.currentPage === 'lobby' && AppState.currentRoom) {
+                const box = document.getElementById('chat-box');
+                if(box) box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        // ACTION HANDLERS
+        window.navTo = (page) => { 
+            AppState.currentPage = page; 
+            if (page === 'lobby') {
+                AppState.activeRooms = MultiplayerService.getActiveRooms();
+            }
+            renderApp(); 
+        };
+        
+        window.goToStageSelect = (puzzleIdx) => { 
+            AppState.selectedPuzzle = puzzleIdx; 
+            AppState.currentPage = 'stageSelect'; 
+            renderApp(); 
+        };
+        
+        window.goToLevelSelect = (stageIdx) => { 
+            AppState.selectedStage = stageIdx; 
+            AppState.currentPage = 'levelSelect'; 
+            renderApp(); 
+        };
+
+        window.resetProgress = () => {
+            if (confirm('Are you sure you want to reset all progress?')) {
+                localStorage.clear();
+                location.reload();
+            }
+        };
+
+        // PUZZLE LOGIC
+        window.startPuzzle = (levelIdx) => {
+            const gridSize = 3 + Math.floor(levelIdx / 5);
+            AppState.puzzleState = {
+                timer: 0,
+                mistakes: 0,
+                isSolved: false,
+                currentLevel: levelIdx,
+                matrix: generateMatrix(gridSize),
+                timerInterval: setInterval(() => {
+                    AppState.puzzleState.timer++;
+                    const tEl = document.getElementById('timer-display');
+                    if(tEl) tEl.innerText = AppState.puzzleState.timer + 's';
+                }, 1000)
+            };
+            AppState.currentPage = 'puzzle';
+            renderApp();
+            
+            setTimeout(() => {
+                AppState.puzzleState.matrix.display = false;
+                renderApp();
+            }, 2000);
+        };
+
+        window.exitPuzzle = () => {
+            clearInterval(AppState.puzzleState.timerInterval);
+            AppState.currentPage = 'levelSelect';
+            renderApp();
+        };
+
+        function generateMatrix(size) {
+            const sequence = [];
+            const maxCells = Math.min(8, Math.floor(size * size / 2));
+            while (sequence.length < maxCells) {
+                const r = Math.floor(Math.random() * size);
+                const c = Math.floor(Math.random() * size);
+                const pos = `${r}-${c}`;
+                if (!sequence.includes(pos)) sequence.push(pos);
+            }
+            return { size, sequence, userSequence: [], display: true };
+        }
+
+        window.handleGameClick = (r, c) => {
+            const { isSolved, matrix, currentLevel } = AppState.puzzleState;
+            if (isSolved || matrix.display) return;
+            
+            const pos = `${r}-${c}`;
+            if (matrix.sequence.includes(pos)) {
+                if (!matrix.userSequence.includes(pos)) {
+                    matrix.userSequence.push(pos);
+                    
+                    if (matrix.userSequence.length === matrix.sequence.length) {
+                        completePuzzle();
+                    } else {
+                        renderApp();
+                    }
+                }
+            } else {
+                AppState.puzzleState.mistakes++;
+                showMessage('Wrong tile! Resetting...', 'Oops');
+                AppState.puzzleState.matrix = generateMatrix(matrix.size);
+                AppState.puzzleState.matrix.display = true;
+                renderApp();
+                setTimeout(() => {
+                    AppState.puzzleState.matrix.display = false;
+                    renderApp();
+                }, 2000);
+            }
+        };
+
+        window.solvePuzzleSim = () => {
+            completePuzzle();
+        };
+
+        function completePuzzle() {
+            AppState.puzzleState.isSolved = true;
+            clearInterval(AppState.puzzleState.timerInterval);
+            showConfetti();
+            
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            const stage = puzzle.stages[AppState.selectedStage];
+            const level = stage.levels[AppState.puzzleState.currentLevel];
+            
+            const time = AppState.puzzleState.timer;
+            const mistakes = AppState.puzzleState.mistakes;
+            const score = Math.max(0, 100 - (time * 0.5) - (mistakes * 10));
+            const stars = mistakes === 0 && time < 30 ? 3 : mistakes < 2 && time < 60 ? 2 : 1;
+            
+            level.status = 'completed';
+            level.score = Math.max(level.score, score);
+            level.time = level.time === 0 ? time : Math.min(level.time, time);
+            level.stars = Math.max(level.stars, stars);
+            
+            if (puzzle.levelsCompleted < (AppState.selectedStage * LEVELS_PER_STAGE + AppState.puzzleState.currentLevel + 1)) {
+                puzzle.levelsCompleted++;
+                AppState.userProgress.totalCompleted++;
+            }
+            
+            const nextLevelIdx = AppState.puzzleState.currentLevel + 1;
+            if (nextLevelIdx < LEVELS_PER_STAGE) {
+                stage.levels[nextLevelIdx].status = 'unlocked';
+            } else {
+                const nextStageIdx = AppState.selectedStage + 1;
+                if (nextStageIdx < STAGES_PER_PUZZLE) {
+                    puzzle.stages[nextStageIdx].levels[0].status = 'unlocked';
+                } else {
+                    const nextPuzzleIdx = AppState.selectedPuzzle + 1;
+                    if (nextPuzzleIdx < TOTAL_PUZZLES) {
+                        AppState.userProgress.puzzles[nextPuzzleIdx].stages[0].levels[0].status = 'unlocked';
+                    }
+                }
+            }
+            
+            saveProgress();
+            showMessage(`Solved in ${time}s with ${mistakes} mistakes! Score: ${Math.round(score)}`, 'Victory!');
+            renderApp();
+        }
+
+        // MULTIPLAYER
+        window.createRoom = (mode) => {
+            const room = MultiplayerService.createRoom(mode);
+            AppState.currentRoom = room;
+            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            renderApp();
+        };
+
+        window.joinRoom = (code) => {
+            const res = MultiplayerService.joinRoom(code);
+            if (typeof res === 'string') {
+                showMessage(res.replace(/_/g, ' '), 'Error');
+            } else {
+                AppState.currentRoom = res;
+                renderApp();
+            }
+        };
+
+        window.joinRoomByInput = () => {
+            const val = document.getElementById('room-code-input').value.toUpperCase();
+            if(val.length === 4) window.joinRoom(val);
+        };
+
+        window.leaveRoom = () => {
+            AppState.currentRoom = null;
+            AppState.activeRooms = MultiplayerService.getActiveRooms();
+            renderApp();
+        };
+
+        window.sendChat = (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            const msg = input.value;
+            if(msg.trim()) {
+                MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
+                AppState.currentRoom = MultiplayerService.rooms.find(r => r.roomCode === AppState.currentRoom.roomCode);
+                input.value = '';
+                renderApp();
+            }
+        };
+
+        // START
+        initApp();
+    </script>
+</body>
+</html>
