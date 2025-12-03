@@ -3,942 +3,931 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Nexus: Multiplayer</title>
+    <title>Puzzle Nexus - Multiplayer Memory</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Firebase Imports -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, arrayUnion, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Global Firebase State
-        window.firebaseState = {
-            db: null,
-            auth: null,
-            user: null,
-            appId: null,
-            unsubscribeRoom: null
-        };
-
-        // --- FIREBASE INITIALIZATION ---
-        const initFirebase = async () => {
-            const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const db = getFirestore(app);
-            const appId = window.__app_id || 'default-app';
-
-            window.firebaseState.db = db;
-            window.firebaseState.auth = auth;
-            window.firebaseState.appId = appId;
-
-            // Auth Flow
-            try {
-                if (window.__initial_auth_token) {
-                    await signInWithCustomToken(auth, window.__initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Auth failed:", error);
-            }
-
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    window.firebaseState.user = user;
-                    window.AppState.userId = user.uid;
-                    window.initAppLogic(); // Start App after Auth
-                }
-            });
-        };
-
-        initFirebase();
-    </script>
-
     <style>
-        /* Custom Theme Colors */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1f2937, #111827); /* Dark blue-grey gradient */
+            min-height: 100vh;
+        }
         .text-gold-400 { color: #FFD700; }
         .bg-gold-600 { background-color: #FFC72C; }
         .hover\:bg-gold-700:hover { background-color: #FFB300; }
-        .border-gold-400 { border-color: #FFD700; }
+        .shadow-gold-500\/50 { box-shadow: 0 10px 15px -3px rgba(255, 199, 44, 0.5), 0 4px 6px -4px rgba(255, 199, 44, 0.5); }
         
-        .shadow-glow { box-shadow: 0 0 15px rgba(45, 212, 191, 0.3); }
-        
-        /* Animation Classes */
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        .shadow-rainbow {
+            box-shadow: 
+                0 0 10px rgba(0, 255, 255, 0.4),
+                0 0 20px rgba(255, 215, 0, 0.4),
+                0 0 30px rgba(255, 0, 255, 0.4);
+            transition: all 0.3s ease-in-out;
+        }
+        .card {
+            background-color: #374151; /* Darker card background */
+            transition: transform 0.3s ease, background-color 0.3s ease;
+            transform-style: preserve-3d;
+            position: relative;
+        }
+        .card-inner {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .card.flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #1f2937;
+        }
+        .card-back {
+            background-color: #6b7280; /* Grey back */
+            border: 4px solid #4b5563;
+        }
+        .card-front {
+            background-color: #f3f4f6; /* Light front */
+            transform: rotateY(180deg);
+        }
+        .card.matched .card-front, .card.matched .card-back {
+            background-color: #10b981; /* Green matched */
+            border-color: #059669;
+            color: white;
+            opacity: 0.5;
+            pointer-events: none;
+        }
 
-        @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-        .animate-pop { animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        /* Responsive Grid */
+        #game-board {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: repeat(4, 1fr);
+            max-width: 600px;
+            margin: 0 auto;
+        }
 
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #111827; }
-        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
-
-        /* Game Board Styles */
-        .grid-cell { aspect-ratio: 1; transition: all 0.2s; }
-        .grid-cell:active { transform: scale(0.95); }
+        /* Mobile specific adjustments */
+        @media (max-width: 640px) {
+            #game-board {
+                gap: 0.5rem;
+                grid-template-columns: repeat(3, 1fr);
+                max-width: 90vw;
+            }
+            .card {
+                aspect-ratio: 1 / 1;
+            }
+            .card-face {
+                font-size: 1.5rem;
+            }
+        }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen font-sans overflow-x-hidden selection:bg-teal-500 selection:text-white">
+<body class="p-4 sm:p-8">
 
-    <!-- Main App Container -->
-    <div id="app" class="min-h-screen flex flex-col">
-        <!-- Loading Screen -->
-        <div class="flex flex-col items-center justify-center h-screen space-y-4">
-            <div class="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
-            <div class="text-xl text-teal-400 font-mono animate-pulse">Connecting to Nexus...</div>
+    <div id="app" class="max-w-7xl mx-auto">
+        
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-white mb-2 shadow-rainbow inline-block p-2 rounded-lg">Puzzle Nexus</h1>
+            <p class="text-xl text-gray-400">Multiplayer Memory Game</p>
+            <div id="user-info" class="mt-2 text-sm text-gray-500"></div>
+        </header>
+
+        <!-- Message Box -->
+        <div id="message-box" class="fixed top-0 left-0 right-0 p-4 bg-yellow-500 text-gray-900 text-center font-semibold transition-all duration-300 transform -translate-y-full z-50 rounded-b-lg">
+            <span id="message-title" class="font-bold mr-2"></span><span id="message-text"></span>
         </div>
+
+        <!-- Main Content Area -->
+        <div id="main-content" class="bg-gray-800 p-6 rounded-xl shadow-2xl transition-all duration-500">
+            
+            <!-- Room Selector/Info Area (Rendered by JS) -->
+            <div id="room-area">
+                <!-- Content will be injected here by renderApp() -->
+            </div>
+
+            <!-- Game and Chat Area (Rendered by JS when connected) -->
+            <div id="game-container" class="mt-6 hidden md:grid md:grid-cols-3 md:gap-6">
+                <div class="md:col-span-2">
+                    <h2 class="text-2xl font-bold text-white mb-4">Game Board</h2>
+                    <div id="game-board-wrapper" class="p-4 bg-gray-700 rounded-lg shadow-inner">
+                        <div id="game-board">
+                            <!-- Cards will be injected here -->
+                        </div>
+                    </div>
+                    <div id="game-status" class="mt-4 p-3 bg-gray-700 text-white rounded-lg text-center font-semibold">
+                        Waiting for game to start...
+                    </div>
+                </div>
+                
+                <!-- Chat & Players Column -->
+                <div class="md:col-span-1 flex flex-col space-y-4">
+                    <!-- Players List -->
+                    <div class="bg-gray-700 p-4 rounded-lg flex-shrink-0">
+                        <h3 class="text-xl font-semibold text-white mb-3">Players <span id="player-count" class="text-gray-400"></span></h3>
+                        <ul id="players-list" class="space-y-2 text-gray-300">
+                            <!-- Player list injected here -->
+                        </ul>
+                    </div>
+
+                    <!-- Chat Box -->
+                    <div class="bg-gray-700 p-4 rounded-lg flex-grow flex flex-col">
+                        <h3 class="text-xl font-semibold text-white mb-3">Chat</h3>
+                        <div id="chat-log" class="flex-grow overflow-y-auto h-40 space-y-2 mb-4 p-2 bg-gray-600 rounded-lg text-sm">
+                            <!-- Chat messages injected here -->
+                        </div>
+                        <form onsubmit="window.sendChat(event)" class="flex">
+                            <input id="chat-input" type="text" placeholder="Type a message..." class="flex-grow p-2 rounded-l-lg bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-400">
+                            <button type="submit" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold p-2 rounded-r-lg transition duration-150">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Room List Modal (Hidden by default) -->
+        <div id="room-list-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 hidden">
+            <div class="bg-gray-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
+                <h2 class="text-2xl font-bold text-white mb-4">Active Rooms</h2>
+                <ul id="active-rooms-list" class="space-y-3 max-h-60 overflow-y-auto pr-2">
+                    <!-- List of rooms injected here -->
+                </ul>
+                <button onclick="document.getElementById('room-list-modal').classList.add('hidden')" class="mt-6 w-full p-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-150">
+                    Close
+                </button>
+            </div>
+        </div>
+
     </div>
 
-    <!-- Modal Portal -->
-    <div id="modal-container"></div>
-    
-    <!-- Confetti Canvas -->
-    <canvas id="confetti-canvas" class="fixed inset-0 pointer-events-none z-50"></canvas>
-
     <script type="module">
-        import { doc, setDoc, getDoc, updateDoc, arrayUnion, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- FIREBASE INITIALIZATION AND AUTHENTICATION ---
+        
+        // Global variables provided by the Canvas environment
+        
+        // Check if the variables exist (they are defined by the Gemini environment)
+        const isCanvasEnvironment = typeof __firebase_config !== 'undefined';
 
-        // --- GAME CONSTANTS ---
-        const PUZZLE_NAMES = [
-            "Sequential Memory", 
-            "Light Switch Logic", 
-            "Pattern Simon", 
-            "Coming Soon..."
-        ];
+        let appId;
+        let firebaseConfig;
+        let initialAuthToken;
 
-        // --- APPLICATION STATE ---
-        window.AppState = {
-            userId: null,
-            currentPage: 'loading',
-            activeRoom: null,
-            roomListener: null,
+        if (isCanvasEnvironment) {
+            // Use the variables provided by the Canvas environment
+            appId = __app_id;
+            firebaseConfig = JSON.parse(__firebase_config);
+            initialAuthToken = __initial_auth_token;
+        } else {
+            // --- FALLBACK FOR STANDALONE / PUBLISHED VERSION ---
+            // If running outside the Gemini environment, Firebase will fail to initialize.
+            // We set placeholders and handle the error gracefully in initApp().
+            // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+            firebaseConfig = {
+              apiKey: "AIzaSyB-3kAk-lMT3jTny2YIs2R1_0mG-tJlmJI",
+              authDomain: "puzzlesapp.firebaseapp.com",
+              projectId: "puzzlesapp",
+              storageBucket: "puzzlesapp.firebasestorage.app",
+              messagingSenderId: "303461259730",
+              appId: "1:303461259730:web:a1790a976b6d58d71dd00b",
+              measurementId: "G-8YEJEBX0NE"
+            };
+            appId = firebaseConfig.projectId; // Use project ID as app ID for fallback collection path
+            initialAuthToken = null;
+        }
+
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let unsubscribeRoom = null;
+        let unsubscribeRooms = null;
+        
+        const showMessage = (text, title = 'Notification', duration = 3000) => {
+            const box = document.getElementById('message-box');
+            document.getElementById('message-title').textContent = title;
+            document.getElementById('message-text').textContent = text;
             
-            // Single Player / Local State
-            selectedGameId: 0,
+            box.classList.remove('-translate-y-full');
+            box.classList.add('translate-y-0');
             
-            // Game State
-            gameState: {
-                active: false,
-                score: 0,
-                mistakes: 0,
-                level: 1,
-                matrix: [], // For Memory
-                lights: [], // For Light Switch
-                pattern: [], // For Simon
-                userPattern: [],
-                timer: 0,
-                interval: null,
-                isDemo: false // True during "memorize" phase
-            }
+            setTimeout(() => {
+                box.classList.remove('translate-y-0');
+                box.classList.add('-translate-y-full');
+            }, duration);
         };
 
-        // --- FIRESTORE SERVICE ---
-        const Service = {
-            // Helpers
-            getDb: () => window.firebaseState.db,
-            getUserId: () => window.firebaseState.user.uid,
-            getAppId: () => window.firebaseState.appId,
+        const initApp = async () => {
+             if (!firebaseConfig) {
+                // This is the error handler for external publishing
+                showMessage('Multiplayer disabled. Missing Firebase configuration.', '🔴 Fatal Error');
+                document.getElementById('room-area').innerHTML = `
+                    <div class="p-6 bg-red-800 text-white rounded-lg">
+                        <h2 class="font-bold text-xl mb-2">Multiplayer Disabled (External Use)</h2>
+                        <p>This application relies on a secured Firebase/Firestore connection that is automatically provided in the Gemini environment.</p>
+                        <p class="mt-2">To run this version outside the environment, you must:</p>
+                        <ol class="list-decimal list-inside mt-2 ml-4">
+                            <li>Create your own Firebase project and Firestore database.</li>
+                            <li>Get your project's configuration object.</li>
+                            <li>Insert your config object in the <code>&lt;script&gt;</code> block where the <code>firebaseConfig = null;</code> fallback is currently located.</li>
+                            <li>Use your own secure authentication method.</li>
+                        </ol>
+                        <p class="mt-3 font-semibold">Current environment does not provide the configuration automatically.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('Debug'); // Enable logging for debugging
+
+            try {
+                // Handle authentication
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                userId = auth.currentUser?.uid;
+                if (userId) {
+                    document.getElementById('user-info').textContent = `User ID: ${userId}`;
+                    console.log("Authenticated successfully. User ID:", userId);
+                    
+                    // Start listening to the list of active rooms immediately
+                    MultiplayerService.listenToActiveRooms((rooms) => { 
+                        AppState.activeRooms = rooms; 
+                        renderApp(); 
+                    });
+                    renderApp(); // Initial render after auth
+                } else {
+                    throw new Error("User ID is null after sign-in.");
+                }
+
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                showMessage('Authentication failed. Multiplayer disabled.', '❌ Auth Error');
+            }
+        };
+        
+        // --- GAME STATE AND HELPERS ---
+
+        const CARD_ICONS = ['🍎', '🍌', '🍒', '🍇', '🍋', '🥝', '🍉', '🍍', '🍓'];
+        const CARD_COUNT = 18; // 9 pairs
+        const ROOM_COLLECTION = `artifacts/${appId}/public/data/memoryRooms`;
+
+        const AppState = {
+            currentRoom: null,
+            activeRooms: [],
+            gameBoard: [],
+            players: {},
+            currentPlayer: null,
+            isMyTurn: false,
+            waitingForPair: false,
+            currentFlippedCards: [],
+        };
+        
+        let lastPlayerCount = 0; // Used for change detection in onSnapshot
+
+        const getPlayerColor = (id) => {
+            const colors = ['text-blue-400', 'text-red-400', 'text-green-400', 'text-yellow-400', 'text-purple-400', 'text-pink-400'];
+            // Simple hash function to assign color based on UID
+            let hash = 0;
+            for (let i = 0; i < id.length; i++) {
+                hash = id.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            return colors[Math.abs(hash) % colors.length];
+        };
+
+        const generateBoard = () => {
+            let icons = [...CARD_ICONS].slice(0, CARD_COUNT / 2);
+            icons = icons.flatMap(icon => [icon, icon]);
             
-            // Room Management
-            async createRoom(mode) {
-                const code = Math.random().toString(36).substring(2, 6).toUpperCase();
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+            // Fisher-Yates shuffle
+            for (let i = icons.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [icons[i], icons[j]] = [icons[j], icons[i]];
+            }
+
+            return icons.map((icon, index) => ({
+                id: index,
+                icon: icon,
+                isFlipped: false,
+                isMatched: false,
+            }));
+        };
+
+
+        // --- FIREBASE SERVICE IMPLEMENTATION ---
+
+        const MultiplayerService = {
+            async getActiveRooms() {
+                if (!db) return [];
+                try {
+                    const q = query(collection(db, ROOM_COLLECTION));
+                    const snapshot = await getDocs(q);
+                    return snapshot.docs.map(doc => ({ roomCode: doc.id, ...doc.data() }));
+                } catch (e) {
+                    console.error("Error getting active rooms: ", e);
+                    return [];
+                }
+            },
+
+            async createRoom() {
+                if (!db || !userId) throw new Error("Database or User ID not initialized.");
+                const roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+                const board = generateBoard();
                 
                 const roomData = {
-                    roomCode: code,
-                    hostId: this.getUserId(),
-                    mode: mode,
-                    status: 'waiting', // waiting, playing
-                    gameType: null,
-                    gameSeed: null, // For syncing random generation
-                    players: [{
-                        id: this.getUserId(),
-                        name: `Player ${this.getUserId().substr(0,4)}`,
-                        score: 0,
-                        isHost: true
-                    }],
-                    chat: []
+                    status: 'waiting', // waiting, playing, finished
+                    currentPlayerId: userId,
+                    players: [{ id: userId, score: 0, color: getPlayerColor(userId) }],
+                    board: JSON.stringify(board), // Serialize board
+                    chat: [{ sender: 'SYSTEM', message: `${userId} created the room.`, timestamp: Date.now() }],
+                    flippedCards: [],
+                    matchRequests: [], // For handling concurrent flips
+                    createdAt: Date.now(),
                 };
-
+                
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
                 await setDoc(roomRef, roomData);
-                return code;
+                return { roomCode, ...roomData };
             },
 
-            async joinRoom(code) {
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
-                const snap = await getDoc(roomRef);
+            async joinRoom(roomCode) {
+                if (!db || !userId) throw new Error("Database or User ID not initialized.");
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
 
-                if (!snap.exists()) throw new Error("Room not found");
+                const roomSnap = await getDoc(roomRef);
+                if (!roomSnap.exists()) {
+                     throw new Error(`Room ${roomCode} does not exist.`);
+                }
+                const roomData = roomSnap.data();
                 
-                const room = snap.data();
-                if (room.players.some(p => p.id === this.getUserId())) return room; // Already in
+                // Only add player if they are not already in the list
+                const isAlreadyJoined = roomData.players.some(p => p.id === userId);
+                if (!isAlreadyJoined) {
+                    await updateDoc(roomRef, {
+                        players: [...(roomData.players || []), { id: userId, score: 0, color: getPlayerColor(userId) }]
+                    });
+                    await this.sendMessage(roomCode, `${userId} joined the room.`, 'SYSTEM');
+                }
+            },
 
-                const newPlayer = {
-                    id: this.getUserId(),
-                    name: `Player ${this.getUserId().substr(0,4)}`,
-                    score: 0,
-                    isHost: false
-                };
+            async getRoom(roomCode) {
+                if (!db) return null;
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
+                const docSnap = await getDoc(roomRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    // Deserialize board
+                    try {
+                       data.board = JSON.parse(data.board);
+                    } catch (e) {
+                       console.error("Failed to parse board data:", e);
+                       data.board = [];
+                    }
+                    return { roomCode: docSnap.id, ...data };
+                }
+                return null;
+            },
 
+            async flipCard(roomCode, cardIndex) {
+                if (!db || !userId) throw new Error("Database or User ID not initialized.");
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
+
+                // Add a flip request to the queue
                 await updateDoc(roomRef, {
-                    players: arrayUnion(newPlayer)
+                    matchRequests: [
+                        ...(AppState.currentRoom?.matchRequests || []),
+                        { playerId: userId, cardIndex: cardIndex, timestamp: Date.now() }
+                    ]
                 });
-                return room;
             },
 
-            async sendChat(code, message) {
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
-                const chatMsg = {
-                    sender: `Player ${this.getUserId().substr(0,4)}`,
-                    text: message,
-                    time: Date.now(),
-                    uid: this.getUserId()
-                };
-                // Read-modify-write for chat to append simply (or use arrayUnion)
-                await updateDoc(roomRef, { chat: arrayUnion(chatMsg) });
-            },
-
-            async updateScore(code, score) {
-                // In a real app, we'd use a transaction or map update. 
-                // For this structure, we read, map, and write.
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
-                const snap = await getDoc(roomRef);
-                if (!snap.exists()) return;
-                
-                const players = snap.data().players.map(p => {
-                    if (p.id === this.getUserId()) return { ...p, score: score };
-                    return p;
-                });
-                
-                await updateDoc(roomRef, { players });
-            },
-
-            async setGameStatus(code, gameType, status, seed) {
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+            async sendMessage(roomCode, message, sender = userId) {
+                if (!db) return;
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
                 await updateDoc(roomRef, {
-                    gameType,
-                    status, 
-                    gameSeed: seed || Math.floor(Math.random() * 100000)
+                    chat: [...(AppState.currentRoom?.chat || []), { sender, message, timestamp: Date.now() }]
                 });
             },
-
-            // Real-time listener
-            subscribeToRoom(code, callback) {
-                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
-                return onSnapshot(roomRef, (doc) => {
-                    if (doc.exists()) callback(doc.data());
-                    else callback(null);
+            
+            // This is crucial: handles the real-time updates for a single room
+            listenToRoom(roomCode, callback) {
+                if (!db) return () => {};
+                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
+                // Clear existing listener if any
+                if (unsubscribeRoom) { unsubscribeRoom(); unsubscribeRoom = null; } 
+                
+                unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        // Deserialize board before passing to callback
+                        try {
+                           data.board = JSON.parse(data.board);
+                        } catch (e) {
+                           console.error("Failed to parse board data:", e);
+                           data.board = [];
+                        }
+                        callback({ roomCode: docSnap.id, ...data });
+                    } else {
+                        callback(null);
+                        showMessage("Room was deleted or closed.", "❌ Disconnected");
+                        window.leaveRoom();
+                    }
+                }, (error) => {
+                    console.error("Error listening to room: ", error);
+                    showMessage("Lost connection to room.", "⚠️ Connection Error");
                 });
+                return unsubscribeRoom;
+            },
+
+            listenToActiveRooms(callback) {
+                if (!db) return () => {};
+                const q = query(collection(db, ROOM_COLLECTION));
+                // Clear existing listener if any
+                if (unsubscribeRooms) { unsubscribeRooms(); unsubscribeRooms = null; }
+
+                unsubscribeRooms = onSnapshot(q, (snapshot) => {
+                    const rooms = snapshot.docs.map(doc => ({ roomCode: doc.id, ...doc.data() }));
+                    callback(rooms);
+                }, (error) => {
+                    console.error("Error listening to rooms: ", error);
+                });
+                return unsubscribeRooms;
             }
         };
 
-        // --- APP LOGIC INITIALIZATION ---
-        window.initAppLogic = () => {
-            window.navTo('home');
-        };
 
-        // --- ROUTING & NAVIGATION ---
-        window.navTo = (page) => {
-            window.AppState.currentPage = page;
-            renderApp();
-        };
+        // --- GAME LOGIC (RUNS ON STATE UPDATE) ---
 
-        // --- GAME LOGIC ---
-
-        // 1. Sequential Memory
-        function initSequentialMemory(level, seed) {
-            // Seeded random for Multiplayer sync
-            const rng = mulberry32(seed ? seed + level : Date.now());
-            const size = 3 + Math.floor(level / 3);
-            const sequenceLength = 3 + level;
-            const sequence = [];
+        const processMatchRequests = (room) => {
+            if (room.matchRequests.length === 0) return null; // No updates needed
             
-            for(let i=0; i<sequenceLength; i++) {
-                const r = Math.floor(rng() * size);
-                const c = Math.floor(rng() * size);
-                sequence.push(`${r}-${c}`);
-            }
+            let newRoom = { ...room };
+            let newBoard = [...room.board];
+            let newPlayers = [...room.players];
+            let newFlippedCards = [...room.flippedCards];
+            let nextPlayerId = room.currentPlayerId;
+            let chatUpdate = [];
 
-            return {
-                type: 'memory',
-                gridSize: size,
-                sequence,
-                userSequence: [],
-                status: 'memorize' // memorize -> input -> success/fail
-            };
-        }
+            // Only process the oldest request
+            const request = newRoom.matchRequests[0];
+            const cardIndex = request.cardIndex;
+            const flipperId = request.playerId;
 
-        // 2. Light Switch (Lights Out)
-        function initLightSwitch(level, seed) {
-            const rng = mulberry32(seed ? seed + level : Date.now());
-            const size = 5;
-            // Create solved board (all off) then scramble
-            let board = Array(size).fill().map(() => Array(size).fill(false));
+            const isTurn = flipperId === newRoom.currentPlayerId;
+            const card = newBoard[cardIndex];
             
-            // Scramble
-            const moves = 5 + level * 2;
-            for(let i=0; i<moves; i++) {
-                const r = Math.floor(rng() * size);
-                const c = Math.floor(rng() * size);
-                toggleLights(board, r, c, size);
+            const isAlreadyFlipped = newFlippedCards.some(f => f.id === card.id);
+            
+            if (card.isMatched || isAlreadyFlipped) {
+                // Invalid flip, just remove the request
+            } else if (isTurn && newFlippedCards.length < 2) {
+                
+                // Flip the card
+                newBoard[cardIndex] = { ...card, isFlipped: true };
+                newFlippedCards.push(newBoard[cardIndex]);
+
+                if (newFlippedCards.length === 2) {
+                    const [card1, card2] = newFlippedCards;
+                    
+                    if (card1.icon === card2.icon) {
+                        // MATCH!
+                        newBoard[card1.id] = { ...newBoard[card1.id], isMatched: true, isFlipped: true };
+                        newBoard[card2.id] = { ...newBoard[card2.id], isMatched: true, isFlipped: true };
+                        
+                        newPlayers = newPlayers.map(p => 
+                            p.id === flipperId ? { ...p, score: p.score + 1 } : p
+                        );
+                        chatUpdate.push({ sender: 'SYSTEM', message: `${flipperId} scored a match! They get another turn.`, timestamp: Date.now() });
+                        
+                        newFlippedCards = []; // Clear for next pair
+                        
+                        // Check for win condition
+                        if (newBoard.every(c => c.isMatched)) {
+                            newRoom.status = 'finished';
+                            chatUpdate.push({ sender: 'SYSTEM', message: `Game Over!`, timestamp: Date.now() });
+                        }
+
+                    } else {
+                        // NO MATCH.
+                        
+                        // Change turn
+                        const currentPlayerIndex = newPlayers.findIndex(p => p.id === flipperId);
+                        const nextIndex = (currentPlayerIndex + 1) % newPlayers.length;
+                        nextPlayerId = newPlayers[nextIndex].id;
+                        
+                        // Flip cards back immediately in state. The UI will handle the visual delay.
+                        newBoard[card1.id] = { ...newBoard[card1.id], isFlipped: false };
+                        newBoard[card2.id] = { ...newBoard[card2.id], isFlipped: false };
+
+                        chatUpdate.push({ sender: 'SYSTEM', message: `${flipperId} missed. It is now ${nextPlayerId}'s turn.`, timestamp: Date.now() });
+                        newFlippedCards = []; // Clear for next player
+                    }
+                }
+            }
+            
+            // 2. Prepare the update document
+            const updateData = {
+                board: JSON.stringify(newBoard),
+                players: newPlayers,
+                currentPlayerId: nextPlayerId,
+                flippedCards: newFlippedCards,
+                // Crucially, remove the request we just processed
+                matchRequests: newRoom.matchRequests.slice(1)
+            };
+            
+            if(newRoom.status === 'finished') {
+                 updateData.status = 'finished';
+            }
+            
+            if(chatUpdate.length > 0) {
+                updateData.chat = [...room.chat, ...chatUpdate];
+            }
+            
+            return updateData;
+        };
+
+
+        // --- RENDERING AND UI UPDATES ---
+
+        const renderApp = () => {
+            const roomArea = document.getElementById('room-area');
+            const gameContainer = document.getElementById('game-container');
+            const boardEl = document.getElementById('game-board');
+            const playersListEl = document.getElementById('players-list');
+            const chatLogEl = document.getElementById('chat-log');
+            const gameStatusEl = document.getElementById('game-status');
+            
+            if (!userId) {
+                // Check if the fatal error message has already been rendered
+                if (!firebaseConfig) return; 
+
+                // Authentication still pending or failed
+                roomArea.innerHTML = `<div class="p-6 bg-yellow-600 text-white rounded-lg text-center">
+                    <p class="font-bold">Connecting to Multiplayer...</p>
+                    <p class="text-sm">Please wait while we connect you to the service.</p>
+                </div>`;
+                gameContainer.classList.add('hidden');
+                return;
             }
 
-            return {
-                type: 'lights',
-                gridSize: size,
-                board: board,
-                moves: 0,
-                status: 'playing'
-            };
-        }
+            // 1. Not in a room: Show room list/creation
+            if (!AppState.currentRoom) {
+                gameContainer.classList.add('hidden');
+                roomArea.innerHTML = `
+                    <div class="p-6 bg-gray-700 rounded-lg">
+                        <h2 class="text-2xl font-bold text-white mb-4">Join or Create Game</h2>
+                        <div class="space-y-4">
+                            <!-- Create Room -->
+                            <button onclick="window.createAndJoinRoom()" class="w-full p-3 bg-gold-600 hover:bg-gold-700 text-gray-900 font-extrabold rounded-lg transition duration-150 shadow-gold-500/50">
+                                <i class="fas fa-plus mr-2"></i> Create New Room
+                            </button>
 
-        function toggleLights(board, r, c, size) {
-            const dirs = [[0,0], [0,1], [0,-1], [1,0], [-1,0]];
-            dirs.forEach(([dr, dc]) => {
-                const nr = r + dr, nc = c + dc;
-                if(nr >= 0 && nr < size && nc >= 0 && nc < size) {
-                    board[nr][nc] = !board[nr][nc];
+                            <!-- Join by Code -->
+                            <div class="flex space-x-2">
+                                <input type="text" id="room-code-input" placeholder="Enter 4-letter code" maxlength="4" class="flex-grow p-3 rounded-lg bg-gray-800 text-white uppercase text-center font-bold tracking-widest border border-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-400">
+                                <button onclick="window.joinRoomByInput()" class="p-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-150">
+                                    Join
+                                </button>
+                            </div>
+                            
+                            <!-- View Active Rooms -->
+                            <button onclick="window.showActiveRooms()" class="w-full p-3 bg-gray-600 hover:bg-gray-500 text-white font-bold rounded-lg transition duration-150">
+                                <i class="fas fa-list-ul mr-2"></i> View Active Rooms (${AppState.activeRooms.length})
+                            </button>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 2. In a room: Show game and chat
+            gameContainer.classList.remove('hidden');
+            const room = AppState.currentRoom;
+            
+            // Room Info Bar
+            roomArea.innerHTML = `
+                <div class="flex items-center justify-between p-4 bg-gray-700 rounded-lg mb-6">
+                    <h2 class="text-xl font-bold text-white">
+                        Room: <span class="text-gold-400 tracking-widest">${room.roomCode}</span>
+                    </h2>
+                    <div class="flex space-x-3">
+                        <button onclick="window.copyRoomCode('${room.roomCode}')" class="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <button onclick="window.leaveRoom()" class="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold">
+                            Leave
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // --- Game Board Rendering ---
+            boardEl.innerHTML = ''; // Clear board
+            
+            const isMyTurn = room.currentPlayerId === userId;
+            const waitingForPair = room.flippedCards.length === 1;
+
+            AppState.isMyTurn = isMyTurn;
+            AppState.waitingForPair = waitingForPair;
+            
+            // Set grid columns dynamically based on number of cards
+            const totalCards = room.board.length;
+            let cols = 4;
+            if (totalCards > 16) cols = 6;
+            else if (totalCards <= 12) cols = 4;
+            else cols = 5;
+            boardEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+
+            room.board.forEach((card, index) => {
+                const cardEl = document.createElement('div');
+                
+                // Determine if this card is currently visible (either matched or one of the two flipped)
+                const isCurrentlyFlipped = room.flippedCards.some(f => f.id === card.id);
+                const isVisible = card.isMatched || isCurrentlyFlipped;
+
+                cardEl.className = `card aspect-square rounded-lg shadow-xl cursor-pointer ${isVisible ? 'flipped' : ''} ${card.isMatched ? 'matched' : ''}`;
+                
+                let clickHandler = `window.handleCardClick(${index}, ${isVisible})`;
+
+                // Apply a visual delay for non-matched cards that were just flipped, before they flip back
+                if (isCurrentlyFlipped && !card.isMatched && room.flippedCards.length === 2) {
+                     // If two cards are flipped and not matched, prevent further clicks until turn changes
+                     cardEl.style.pointerEvents = 'none';
+                     
+                     // If it's a miss, we'll visually flip them back after a delay (handled by CSS/State change)
+                     // In the state, they are immediately set to isFlipped=false by the 'host' logic.
+                     // The visual flip back is handled by the removal of the 'flipped' class on the next render.
+                } else if (card.isMatched) {
+                    cardEl.style.pointerEvents = 'none';
+                }
+                
+                cardEl.onclick = new Function(clickHandler);
+
+                cardEl.innerHTML = `
+                    <div class="card-inner">
+                        <div class="card-face card-back">
+                            <i class="fas fa-question text-xl text-white"></i>
+                        </div>
+                        <div class="card-face card-front">
+                            ${card.icon}
+                        </div>
+                    </div>
+                `;
+                boardEl.appendChild(cardEl);
+            });
+            
+            // --- Status Update ---
+            if (room.status === 'finished') {
+                const winner = room.players.sort((a, b) => b.score - a.score)[0];
+                gameStatusEl.className = 'mt-4 p-3 bg-yellow-600 text-gray-900 rounded-lg text-center font-extrabold text-lg';
+                gameStatusEl.textContent = `Game Finished! Winner: ${winner.id} with ${winner.score} matches!`;
+            } else {
+                gameStatusEl.className = 'mt-4 p-3 rounded-lg text-center font-semibold transition-colors duration-300';
+                if (isMyTurn) {
+                    gameStatusEl.textContent = "🟢 Your Turn! Click a card.";
+                    gameStatusEl.classList.add('bg-green-600', 'text-white');
+                    gameStatusEl.classList.remove('bg-gray-700');
+                } else {
+                    gameStatusEl.textContent = `🔴 Waiting for ${room.currentPlayerId}'s turn.`;
+                    gameStatusEl.classList.remove('bg-green-600', 'text-white');
+                    gameStatusEl.classList.add('bg-gray-700', 'text-white');
+                }
+            }
+
+
+            // --- Player List Rendering ---
+            playersListEl.innerHTML = '';
+            document.getElementById('player-count').textContent = `(${room.players.length})`;
+            room.players.sort((a, b) => b.score - a.score).forEach(player => {
+                const isCurrentPlayer = player.id === userId;
+                const isTurnPlayer = player.id === room.currentPlayerId;
+                playersListEl.innerHTML += `
+                    <li class="flex items-center justify-between p-2 rounded-md ${isTurnPlayer ? 'bg-gold-600 text-gray-900 font-bold shadow-md' : 'bg-gray-600'}">
+                        <span class="truncate ${player.color}">
+                            ${isTurnPlayer ? '<i class="fas fa-flag mr-1"></i>' : ''}
+                            ${player.id} ${isCurrentPlayer ? '(You)' : ''}
+                        </span>
+                        <span class="font-bold text-lg ${isTurnPlayer ? 'text-gray-900' : 'text-white'}">${player.score}</span>
+                    </li>
+                `;
+            });
+
+            // --- Chat Log Rendering ---
+            if (room.chat.length !== chatLogEl.children.length) {
+                chatLogEl.innerHTML = room.chat.map(msg => {
+                    const isSystem = msg.sender === 'SYSTEM';
+                    const isMe = msg.sender === userId;
+                    const senderClass = isSystem ? 'text-yellow-400' : (isMe ? 'text-blue-400' : 'text-red-400');
+                    const senderName = isSystem ? 'System' : (isMe ? 'You' : msg.sender);
+                    return `<p><span class="font-semibold ${senderClass}">${senderName}:</span> ${msg.message}</p>`;
+                }).join('');
+                // Scroll to bottom
+                chatLogEl.scrollTop = chatLogEl.scrollHeight;
+            }
+            
+            // --- Process Match Requests (runs only if I'm the designated "host" or first player) ---
+            if (room.players.length > 0 && room.players[0].id === userId && room.matchRequests.length > 0) {
+                 const updateData = processMatchRequests(room);
+                 if (updateData) {
+                    const roomRef = doc(db, ROOM_COLLECTION, room.roomCode);
+                    updateDoc(roomRef, updateData).catch(e => {
+                        console.error("Error processing match request:", e);
+                    });
+                 } else {
+                     // If updateData is null, it means the request was invalid (e.g., card already flipped).
+                     // We still need to clear the request queue.
+                     const roomRef = doc(db, ROOM_COLLECTION, room.roomCode);
+                     updateDoc(roomRef, { matchRequests: room.matchRequests.slice(1) }).catch(e => {
+                         console.error("Error clearing invalid match request:", e);
+                     });
+                 }
+            }
+        };
+
+
+        // --- UI ACTIONS ---
+
+        window.handleCardClick = async (cardIndex, isVisible) => {
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            
+            if (AppState.currentRoom.status === 'finished') {
+                showMessage("The game is finished.", "Game Over");
+                return;
+            }
+            if (!AppState.isMyTurn) {
+                showMessage("It's not your turn!", "Wait");
+                return;
+            }
+            if (AppState.currentRoom.flippedCards.length >= 2) {
+                showMessage("Waiting for turn change...", "Wait");
+                return;
+            }
+            if (isVisible) {
+                showMessage("This card is already flipped or matched.", "Invalid Move");
+                return;
+            }
+
+            // Send flip request to the database
+            await MultiplayerService.flipCard(AppState.currentRoom.roomCode, cardIndex);
+        };
+        
+        window.createAndJoinRoom = async () => {
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            try {
+                const room = await MultiplayerService.createRoom();
+                await window.joinRoom(room.roomCode);
+                showMessage(`Created and joined room ${room.roomCode}!`, '✅ Connected');
+            } catch (e) {
+                console.error("Error creating room: ", e);
+                showMessage("Failed to create room.", '❌ Error');
+            }
+        };
+
+        window.showActiveRooms = async () => {
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            try {
+                // Ensure we are listening to active rooms before opening modal
+                if (!unsubscribeRooms) {
+                    MultiplayerService.listenToActiveRooms((rooms) => { 
+                        AppState.activeRooms = rooms; 
+                        renderApp(); 
+                        // Update list in modal if it's open
+                        if (!document.getElementById('room-list-modal').classList.contains('hidden')) {
+                             updateRoomListModal(rooms);
+                        }
+                    });
+                }
+                
+                const rooms = AppState.activeRooms;
+                updateRoomListModal(rooms);
+
+                document.getElementById('room-list-modal').classList.remove('hidden');
+            } catch (e) {
+                 console.error("Error fetching rooms: ", e);
+                 showMessage("Failed to load room list.", '❌ Error');
+            }
+        };
+        
+        const updateRoomListModal = (rooms) => {
+             const listEl = document.getElementById('active-rooms-list');
+             listEl.innerHTML = rooms.length === 0 
+                ? '<li class="text-gray-400">No active rooms found.</li>'
+                : rooms.map(room => `
+                    <li class="flex items-center justify-between p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition">
+                        <span class="font-bold text-white">${room.roomCode}</span>
+                        <span class="text-sm text-gray-400">${room.players.length} players</span>
+                        <button onclick="window.joinRoom('${room.roomCode}'); document.getElementById('room-list-modal').classList.add('hidden')" class="ml-4 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
+                            Join
+                        </button>
+                    </li>
+                `).join('');
+        };
+        
+        // This is the core function to establish a real-time connection to a room
+        window.joinRoom = async (code) => {
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            
+            if (!userId) {
+                showMessage("Not authenticated. Please wait.", '❌ Error');
+                return;
+            }
+            // First, try to join (update player list if needed)
+            try {
+                 await MultiplayerService.joinRoom(code);
+            } catch (e) {
+                 console.error("Join attempt failed:", e);
+                 showMessage(e.message, '❌ Error');
+                 return;
+            }
+
+            // Start listening to the room for real-time updates
+            MultiplayerService.listenToRoom(code, (roomData) => {
+                if (roomData) {
+                    // Simple check for new players joining/leaving
+                    if (roomData.players.length !== lastPlayerCount && lastPlayerCount !== 0) {
+                         showMessage(`Player count changed: ${roomData.players.length}`, '🔔 Update');
+                    }
+                    lastPlayerCount = roomData.players.length;
+                    
+                    AppState.currentRoom = roomData;
+                    renderApp();
+                } else if (AppState.currentRoom) {
+                    // Room was deleted
+                    window.leaveRoom();
                 }
             });
-        }
-
-        // 3. Simon Pattern
-        function initSimon(level, seed) {
-            const rng = mulberry32(seed ? seed + level : Date.now());
-            const length = 3 + level;
-            const sequence = [];
-            for(let i=0; i<length; i++) sequence.push(Math.floor(rng() * 4));
-            
-            return {
-                type: 'simon',
-                sequence,
-                userStep: 0,
-                status: 'watch'
-            };
-        }
-
-        // RNG for Sync
-        function mulberry32(a) {
-            return function() {
-                var t = a += 0x6D2B79F5;
-                t = Math.imul(t ^ t >>> 15, t | 1);
-                t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-                return ((t ^ t >>> 14) >>> 0) / 4294967296;
-            }
-        }
-
-        // --- RENDERERS ---
-
-        function renderHeader() {
-            return `
-                <nav class="bg-gray-800 border-b border-teal-900 sticky top-0 z-30 shadow-lg">
-                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                        <div class="flex items-center justify-between h-16">
-                            <div class="flex items-center gap-3 cursor-pointer" onclick="window.navTo('home')">
-                                <i class="fa-solid fa-layer-group text-teal-400 text-2xl"></i>
-                                <span class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-teal-200">
-                                    PUZZLE NEXUS
-                                </span>
-                            </div>
-                            <div class="flex items-center gap-4">
-                                <button onclick="window.navTo('home')" class="text-gray-300 hover:text-white transition">
-                                    <i class="fa-solid fa-home"></i>
-                                </button>
-                                <div class="h-6 w-px bg-gray-700"></div>
-                                <div class="flex items-center gap-2">
-                                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                                    <span class="text-xs text-gray-400 font-mono">${window.AppState.userId ? window.AppState.userId.substr(0,6) : '...'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </nav>
-            `;
-        }
-
-        function renderHome() {
-            return `
-                <div class="max-w-7xl mx-auto px-4 py-12 w-full animate-fade-in">
-                    <div class="text-center mb-12">
-                        <h1 class="text-5xl font-extrabold text-white mb-4 tracking-tight">
-                            Master the <span class="text-teal-400">Grid</span>
-                        </h1>
-                        <p class="text-gray-400 text-lg max-w-2xl mx-auto">
-                            Challenge your logic and memory. Play solo to train or create a room to compete in real-time cross-device battles.
-                        </p>
-                    </div>
-
-                    <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-                        <!-- Multiplayer Card -->
-                        <div class="group relative bg-gradient-to-br from-gray-800 to-gray-900 p-8 rounded-2xl border border-gray-700 hover:border-gold-400 transition-all duration-300 shadow-xl overflow-hidden">
-                            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
-                                <i class="fa-solid fa-users text-9xl text-gold-400"></i>
-                            </div>
-                            <h2 class="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-                                <i class="fa-solid fa-globe text-gold-400"></i> Multiplayer
-                            </h2>
-                            <p class="text-gray-400 mb-8">Create a lobby and invite friends. Compete on the same puzzle seed.</p>
-                            
-                            <div class="space-y-3 relative z-10">
-                                <button onclick="window.createRoom('public')" class="w-full py-3 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg transition transform active:scale-95 shadow-lg shadow-gold-500/20">
-                                    Create Room
-                                </button>
-                                <div class="flex gap-2">
-                                    <input id="room-code-input" type="text" placeholder="CODE" maxlength="4" class="w-24 bg-gray-950 border border-gray-700 rounded-lg px-3 text-center font-mono text-xl uppercase focus:border-gold-400 outline-none text-white">
-                                    <button onclick="window.joinRoomInput()" class="flex-1 py-3 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white font-bold rounded-lg transition">
-                                        Join Room
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Solo Card -->
-                        <div class="group relative bg-gradient-to-br from-gray-800 to-gray-900 p-8 rounded-2xl border border-gray-700 hover:border-teal-400 transition-all duration-300 shadow-xl overflow-hidden">
-                             <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
-                                <i class="fa-solid fa-brain text-9xl text-teal-400"></i>
-                            </div>
-                            <h2 class="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-                                <i class="fa-solid fa-user-astronaut text-teal-400"></i> Solo Training
-                            </h2>
-                            <p class="text-gray-400 mb-8">Hone your skills. Select a challenge module.</p>
-                            
-                            <div class="grid grid-cols-1 gap-3 relative z-10">
-                                <button onclick="window.startSoloGame(0)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
-                                    <span>Sequential Memory</span> <i class="fa-solid fa-play opacity-0 group-hover:opacity-100 transition"></i>
-                                </button>
-                                <button onclick="window.startSoloGame(1)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
-                                    <span>Light Switch Logic</span> <i class="fa-solid fa-lightbulb opacity-0 group-hover:opacity-100 transition"></i>
-                                </button>
-                                <button onclick="window.startSoloGame(2)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
-                                    <span>Simon Pattern</span> <i class="fa-solid fa-music opacity-0 group-hover:opacity-100 transition"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderLobby() {
-            const room = window.AppState.activeRoom;
-            if (!room) return `<div class="p-10 text-center">Loading Room...</div>`;
-
-            const isHost = room.hostId === window.AppState.userId;
-
-            // Chat HTML
-            const chatHtml = room.chat.map(msg => `
-                <div class="mb-2 ${msg.uid === window.AppState.userId ? 'text-right' : 'text-left'}">
-                    <span class="text-xs text-gray-500 block">${msg.sender}</span>
-                    <span class="inline-block px-3 py-1 rounded-lg text-sm ${msg.uid === window.AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
-                        ${msg.text}
-                    </span>
-                </div>
-            `).join('');
-
-            return `
-                <div class="max-w-6xl mx-auto px-4 py-8 h-[calc(100vh-64px)] flex flex-col md:flex-row gap-6 animate-fade-in">
-                    
-                    <!-- Sidebar: Players & Controls -->
-                    <div class="w-full md:w-1/3 flex flex-col gap-6">
-                        <div class="bg-gray-800 rounded-xl p-6 border border-teal-500/30 shadow-lg">
-                            <div class="flex justify-between items-start mb-4">
-                                <div>
-                                    <h2 class="text-sm text-teal-400 font-bold uppercase tracking-wider">Room Code</h2>
-                                    <p class="text-4xl font-mono font-extrabold text-white tracking-widest cursor-pointer hover:text-gold-400 transition" onclick="window.copyCode('${room.roomCode}')" title="Click to Copy">${room.roomCode}</p>
-                                </div>
-                                <button onclick="window.leaveRoom()" class="text-red-400 hover:bg-red-900/30 p-2 rounded transition"><i class="fa-solid fa-sign-out-alt"></i></button>
-                            </div>
-                            
-                            <h3 class="font-bold text-gray-400 mb-3 text-sm uppercase">Players</h3>
-                            <div class="space-y-2 mb-6">
-                                ${room.players.map(p => `
-                                    <div class="flex items-center justify-between p-3 rounded bg-gray-700/50 border border-gray-700 ${p.id === window.AppState.userId ? 'border-teal-500/50' : ''}">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-gray-600 to-gray-700 flex items-center justify-center text-xs font-bold">
-                                                ${p.name.slice(-2)}
-                                            </div>
-                                            <span class="${p.id === window.AppState.userId ? 'text-teal-400 font-bold' : 'text-gray-300'}">${p.name}</span>
-                                            ${p.id === room.hostId ? '<i class="fa-solid fa-crown text-gold-400 text-xs"></i>' : ''}
-                                        </div>
-                                        <span class="font-mono font-bold text-white">${p.score} pts</span>
-                                    </div>
-                                `).join('')}
-                            </div>
-
-                            ${isHost ? `
-                                <div class="space-y-2">
-                                    <p class="text-xs text-gray-400 mb-1">Select Game to Start:</p>
-                                    <div class="grid grid-cols-3 gap-2 mb-2">
-                                        <button onclick="window.selectLobbyGame(0)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 0 ? 'bg-teal-600 border-teal-400' : ''}">Memory</button>
-                                        <button onclick="window.selectLobbyGame(1)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 1 ? 'bg-teal-600 border-teal-400' : ''}">Lights</button>
-                                        <button onclick="window.selectLobbyGame(2)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 2 ? 'bg-teal-600 border-teal-400' : ''}">Simon</button>
-                                    </div>
-                                    <button onclick="window.startGameForRoom()" class="w-full py-3 bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-400 hover:to-green-400 text-white font-bold rounded-lg shadow-glow transition transform active:scale-95">
-                                        START ROUND
-                                    </button>
-                                </div>
-                            ` : `
-                                <div class="text-center p-4 bg-gray-900/50 rounded border border-gray-700 border-dashed">
-                                    <p class="text-sm text-gray-400 animate-pulse">Waiting for host to start...</p>
-                                </div>
-                            `}
-                        </div>
-                    </div>
-
-                    <!-- Main Area: Chat or Game Board -->
-                    <div class="flex-1 flex flex-col bg-gray-800 rounded-xl overflow-hidden shadow-2xl border border-gray-700">
-                        ${room.status === 'playing' ? renderActiveGame(room) : `
-                            <!-- Chat View -->
-                            <div class="flex-1 p-4 overflow-y-auto space-y-2 bg-gray-900/30" id="chat-box">
-                                ${chatHtml.length ? chatHtml : '<div class="h-full flex items-center justify-center text-gray-600">No messages yet. Say hi!</div>'}
-                            </div>
-                            <form onsubmit="window.submitChat(event)" class="p-4 bg-gray-800 border-t border-gray-700 flex gap-2">
-                                <input id="chat-input" type="text" placeholder="Type a message..." class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:border-teal-500 outline-none">
-                                <button type="submit" class="bg-teal-600 hover:bg-teal-700 px-6 py-2 rounded-lg text-white font-bold transition">Send</button>
-                            </form>
-                        `}
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderActiveGame(room) {
-            // Depending on gameType, render the specific game board
-            // room.gameType: 0 (Memory), 1 (Lights), 2 (Simon)
-            const gameData = window.AppState.gameState;
-            
-            return `
-                <div class="flex-1 flex flex-col relative">
-                    <!-- Game HUD -->
-                    <div class="h-16 bg-gray-900 border-b border-gray-700 flex items-center justify-between px-6">
-                        <div class="font-bold text-xl text-white">${PUZZLE_NAMES[room.gameType]}</div>
-                        <div class="flex gap-6">
-                            <div class="text-center">
-                                <span class="text-xs text-gray-500 uppercase">Mistakes</span>
-                                <div class="text-xl font-mono text-red-400">${gameData.mistakes}</div>
-                            </div>
-                            <div class="text-center">
-                                <span class="text-xs text-gray-500 uppercase">Score</span>
-                                <div class="text-xl font-mono text-gold-400">${gameData.score}</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Game Area -->
-                    <div class="flex-1 flex items-center justify-center p-4 bg-gray-900 relative overflow-hidden">
-                         ${renderGameBoard(room.gameType)}
-                    </div>
-                    
-                    ${room.gameType === 2 ? '' : `
-                    <div class="h-1 bg-gray-800">
-                        <div class="h-full bg-teal-500 transition-all duration-1000" style="width: ${gameData.status === 'memorize' ? '100%' : '0%'}"></div>
-                    </div>`}
-                </div>
-            `;
-        }
-
-        function renderGameBoard(type) {
-            const gd = window.AppState.gameState;
-            
-            // --- MEMORY MATRIX ---
-            if (type == 0) {
-                const size = gd.matrix ? Math.sqrt(gd.matrix.length) : 3; // Derive size or store it
-                // Actually we stored gd.matrix as simple bool? No, sequence logic.
-                // Re-deriving grid size from logic.
-                const gridSize = gd.gridSize || 4;
-                
-                let cells = '';
-                for(let r=0; r<gridSize; r++) {
-                    for(let c=0; c<gridSize; c++) {
-                        const pos = `${r}-${c}`;
-                        const isTarget = gd.sequence.includes(pos);
-                        const isSelected = gd.userSequence.includes(pos);
-                        
-                        let cellClass = "bg-gray-800 border-gray-700 hover:bg-gray-700 cursor-pointer";
-                        let content = "";
-
-                        if (gd.status === 'memorize') {
-                            if (isTarget) cellClass = "bg-teal-500 border-teal-400 shadow-glow transform scale-105";
-                        } else {
-                            if (isSelected) {
-                                cellClass = "bg-green-500 border-green-400";
-                                content = '<i class="fa-solid fa-check text-white"></i>';
-                            }
-                        }
-
-                        cells += `<div onclick="window.handleGameInput('${pos}')" class="grid-cell rounded-lg border-2 flex items-center justify-center text-xl transition-all duration-200 ${cellClass}">${content}</div>`;
-                    }
-                }
-                
-                return `
-                    <div class="grid gap-3 animate-pop" style="grid-template-columns: repeat(${gridSize}, minmax(3rem, 5rem));">
-                        ${cells}
-                    </div>
-                    ${gd.status === 'memorize' ? '<div class="absolute bottom-8 text-teal-400 font-bold animate-pulse text-xl tracking-widest">MEMORIZE PATTERN</div>' : ''}
-                `;
-            }
-
-            // --- LIGHT SWITCH ---
-            if (type == 1) {
-                const gridSize = 5;
-                let cells = '';
-                if(gd.board) {
-                    for(let r=0; r<gridSize; r++) {
-                        for(let c=0; c<gridSize; c++) {
-                            const isOn = gd.board[r][c];
-                            const cellClass = isOn ? "bg-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.6)] border-yellow-200" : "bg-gray-800 border-gray-700 hover:bg-gray-700";
-                            cells += `<div onclick="window.handleGameInput('${r}-${c}')" class="grid-cell rounded-md border-2 cursor-pointer transition-all duration-300 ${cellClass}"></div>`;
-                        }
-                    }
-                }
-                return `
-                    <div class="grid gap-2 animate-pop" style="grid-template-columns: repeat(${gridSize}, minmax(2.5rem, 4rem));">
-                        ${cells}
-                    </div>
-                    <div class="absolute bottom-8 text-gray-400 text-sm">Turn all lights OFF</div>
-                `;
-            }
-
-            // --- SIMON ---
-            if (type == 2) {
-                const colors = ['bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500'];
-                const glowColors = ['shadow-[0_0_30px_red]', 'shadow-[0_0_30px_blue]', 'shadow-[0_0_30px_green]', 'shadow-[0_0_30px_yellow]'];
-                
-                let btns = '';
-                for(let i=0; i<4; i++) {
-                    const isActive = gd.activeLight === i;
-                    const baseClass = colors[i];
-                    const activeClass = isActive ? `brightness-150 scale-105 ${glowColors[i]} z-10` : 'opacity-70 hover:opacity-100';
-                    
-                    btns += `<div onclick="window.handleGameInput(${i})" class="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl cursor-pointer transition-all duration-100 border-4 border-black/20 ${baseClass} ${activeClass}"></div>`;
-                }
-
-                return `
-                    <div class="grid grid-cols-2 gap-4 animate-pop p-4 bg-gray-800/50 rounded-full border-4 border-gray-700">
-                        ${btns}
-                    </div>
-                    <div class="absolute bottom-4 font-mono text-xl text-white">${gd.status === 'watch' ? 'WATCH' : 'REPEAT'}</div>
-                `;
-            }
-
-            return `<div>Unknown Game</div>`;
-        }
-
-        // --- CORE APP RENDER ---
-        window.renderApp = () => {
-            const app = document.getElementById('app');
-            app.innerHTML = renderHeader();
-
-            const main = document.createElement('main');
-            main.className = 'flex-grow flex flex-col';
-
-            if (window.AppState.currentPage === 'home') {
-                main.innerHTML = renderHome();
-            } else if (window.AppState.currentPage === 'lobby') {
-                main.innerHTML = renderLobby();
-            }
-
-            app.appendChild(main);
-
-            // Auto-scroll chat
-            const cb = document.getElementById('chat-box');
-            if (cb) cb.scrollTop = cb.scrollHeight;
+            showMessage(`Joined room ${code}!`, '✅ Connected');
         };
 
-        // --- INTERACTION HANDLERS ---
-
-        window.createRoom = async (mode) => {
-            try {
-                const code = await Service.createRoom(mode);
-                await window.joinRoom(code);
-            } catch (e) { alert("Failed to create room: " + e.message); }
+        window.joinRoomByInput = async () => {
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            const val = document.getElementById('room-code-input').value.toUpperCase();
+            if(val.length === 4) await window.joinRoom(val);
         };
 
-        window.joinRoomInput = () => {
-            const code = document.getElementById('room-code-input').value.toUpperCase();
-            if(code.length === 4) window.joinRoom(code);
+        window.leaveRoom = async () => {
+            if (unsubscribeRoom) { unsubscribeRoom(); unsubscribeRoom = null; }
+            AppState.currentRoom = null;
+            lastPlayerCount = 0;
+            // The active rooms listener remains, so the app will return to the room selection screen automatically
+            renderApp();
+            showMessage("You left the room.", '👋 Disconnected');
         };
 
-        window.joinRoom = async (code) => {
-            try {
-                // Subscribe first to get updates instantly
-                if(window.AppState.roomListener) window.AppState.roomListener(); // unsubscribe prev
-                
-                window.AppState.roomListener = Service.subscribeToRoom(code, (roomData) => {
-                    if (!roomData) {
-                        alert("Room closed or doesn't exist.");
-                        window.navTo('home');
-                        return;
-                    }
-
-                    // Sync logic
-                    const prevStatus = window.AppState.activeRoom?.status;
-                    const prevGameId = window.AppState.activeRoom?.gameSeed;
-
-                    window.AppState.activeRoom = roomData;
-                    
-                    // Detect Game Start
-                    if (roomData.status === 'playing' && (prevStatus !== 'playing' || prevGameId !== roomData.gameSeed)) {
-                        initGameLocally(roomData.gameType, roomData.gameSeed);
-                    }
-
-                    if (window.AppState.currentPage !== 'lobby') window.navTo('lobby');
-                    else renderApp();
-                });
-
-                // Add player to list
-                await Service.joinRoom(code);
-
-            } catch (e) {
-                alert("Could not join room: " + e.message);
-            }
+        window.copyRoomCode = (code) => {
+            // Use execCommand for broader compatibility in some sandbox environments
+            const tempInput = document.createElement('input');
+            document.body.appendChild(tempInput);
+            tempInput.value = code;
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            showMessage('Room code copied to clipboard!', '📋 Copied');
         };
 
-        window.leaveRoom = () => {
-            if(window.AppState.roomListener) window.AppState.roomListener();
-            window.AppState.activeRoom = null;
-            window.AppState.roomListener = null;
-            window.navTo('home');
-        };
-
-        window.copyCode = (code) => {
-            navigator.clipboard.writeText(code);
-            // Visual feedback could go here
-        };
-
-        window.submitChat = (e) => {
+        window.sendChat = async (e) => {
             e.preventDefault();
+            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+            
             const input = document.getElementById('chat-input');
-            const msg = input.value.trim();
-            if(msg && window.AppState.activeRoom) {
-                Service.sendChat(window.AppState.activeRoom.roomCode, msg);
+            const msg = input.value;
+            if(msg.trim() && AppState.currentRoom) {
+                await MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
                 input.value = '';
+                // The onSnapshot listener will update AppState.currentRoom and call renderApp()
             }
         };
 
-        window.selectLobbyGame = (id) => {
-            window.AppState.selectedGameId = id;
-            renderApp();
-        };
-
-        window.startGameForRoom = async () => {
-            if (!window.AppState.activeRoom) return;
-            const seed = Math.floor(Math.random() * 100000);
-            await Service.setGameStatus(
-                window.AppState.activeRoom.roomCode, 
-                window.AppState.selectedGameId, 
-                'playing', 
-                seed
-            );
-        };
-
-        window.startSoloGame = (id) => {
-            // Create a fake room-like structure for solo play reuse
-            window.AppState.activeRoom = {
-                roomCode: 'SOLO',
-                hostId: window.AppState.userId,
-                players: [{ id: window.AppState.userId, name: 'You', score: 0 }],
-                chat: [],
-                status: 'playing',
-                gameType: id,
-                gameSeed: Date.now()
-            };
-            initGameLocally(id, Date.now());
-            window.navTo('lobby');
-        };
-
-        // --- GAMEPLAY LOGIC ---
-
-        function initGameLocally(type, seed) {
-            let logic;
-            if (type == 0) logic = initSequentialMemory(1, seed);
-            else if (type == 1) logic = initLightSwitch(1, seed);
-            else if (type == 2) logic = initSimon(1, seed);
-            
-            window.AppState.gameState = {
-                ...logic,
-                score: 0,
-                mistakes: 0,
-                level: 1,
-                activeLight: -1 // For Simon animation
-            };
-
-            // Start Logic
-            if (type == 0) runMemorySequence();
-            if (type == 2) runSimonSequence();
-        }
-
-        function runMemorySequence() {
-            window.AppState.gameState.status = 'memorize';
-            renderApp();
-            setTimeout(() => {
-                window.AppState.gameState.status = 'input';
-                renderApp();
-            }, 2000 + (window.AppState.gameState.level * 200));
-        }
-
-        async function runSimonSequence() {
-            window.AppState.gameState.status = 'watch';
-            window.AppState.gameState.userStep = 0; // Reset user progress
-            renderApp();
-            
-            await new Promise(r => setTimeout(r, 800));
-
-            for (let i = 0; i < window.AppState.gameState.sequence.length; i++) {
-                window.AppState.gameState.activeLight = window.AppState.gameState.sequence[i];
-                renderApp();
-                await new Promise(r => setTimeout(r, 600)); // Light ON time
-                window.AppState.gameState.activeLight = -1;
-                renderApp();
-                await new Promise(r => setTimeout(r, 200)); // Gap
-            }
-            
-            window.AppState.gameState.status = 'input';
-            renderApp();
-        }
-
-        window.handleGameInput = (val) => {
-            const gs = window.AppState.gameState;
-            if (gs.status !== 'input' && gs.status !== 'playing') return;
-
-            // Memory
-            if (gs.type === 'memory') {
-                if (gs.sequence.includes(val)) {
-                    if (!gs.userSequence.includes(val)) {
-                        gs.userSequence.push(val);
-                        gs.score += 10;
-                        if (gs.userSequence.length === gs.sequence.length) {
-                            // Level Complete
-                            handleLevelComplete();
-                        } else {
-                            renderApp();
-                        }
-                    }
-                } else {
-                    gs.mistakes++;
-                    gs.score = Math.max(0, gs.score - 5);
-                    renderApp();
-                    // Feedback shake?
-                }
-            }
-
-            // Light Switch
-            else if (gs.type === 'lights') {
-                const [r, c] = val.split('-').map(Number);
-                toggleLights(gs.board, r, c, gs.gridSize);
-                gs.score += 1; // points for moves? Usually fewer is better, but simpler here.
-                
-                // Check win
-                const isClear = gs.board.every(row => row.every(cell => !cell));
-                if (isClear) handleLevelComplete();
-                else renderApp();
-            }
-
-            // Simon
-            else if (gs.type === 'simon') {
-                const expected = gs.sequence[gs.userStep];
-                
-                // Flash clicked button briefly
-                gs.activeLight = val;
-                renderApp();
-                setTimeout(() => { gs.activeLight = -1; renderApp(); }, 200);
-
-                if (val === expected) {
-                    gs.userStep++;
-                    if (gs.userStep >= gs.sequence.length) {
-                        gs.score += 50;
-                        handleLevelComplete();
-                    }
-                } else {
-                    gs.mistakes++;
-                    gs.score = Math.max(0, gs.score - 10);
-                    // Reset or Game Over?
-                    // Simple restart of sequence
-                    runSimonSequence();
-                }
-            }
-            
-            // Sync Score
-            if (window.AppState.activeRoom && window.AppState.activeRoom.roomCode !== 'SOLO') {
-                Service.updateScore(window.AppState.activeRoom.roomCode, gs.score);
-            }
-        };
-
-        function handleLevelComplete() {
-            // Fireworks or visual flair
-            confettiEffect();
-            
-            // Increment Level
-            const gs = window.AppState.gameState;
-            gs.level++;
-            
-            // Generate next level logic
-            const seed = Date.now(); // or deterministic
-            if (gs.type === 'memory') {
-                const next = initSequentialMemory(gs.level, seed);
-                gs.sequence = next.sequence;
-                gs.gridSize = next.gridSize;
-                gs.userSequence = [];
-                runMemorySequence();
-            } else if (gs.type === 'lights') {
-                const next = initLightSwitch(gs.level, seed);
-                gs.board = next.board;
-                renderApp();
-            } else if (gs.type === 'simon') {
-                const next = initSimon(gs.level, seed);
-                gs.sequence = next.sequence;
-                runSimonSequence();
-            }
-        }
-
-        // --- VISUAL EFFECTS ---
-        function confettiEffect() {
-            const canvas = document.getElementById('confetti-canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            
-            const particles = [];
-            for(let i=0; i<100; i++) {
-                particles.push({
-                    x: window.innerWidth/2,
-                    y: window.innerHeight/2,
-                    vx: (Math.random() - 0.5) * 20,
-                    vy: (Math.random() - 0.5) * 20,
-                    life: 1.0,
-                    color: `hsl(${Math.random()*360}, 100%, 50%)`
-                });
-            }
-            
-            function animate() {
-                ctx.clearRect(0,0,canvas.width,canvas.height);
-                let alive = false;
-                particles.forEach(p => {
-                    p.x += p.vx;
-                    p.y += p.vy;
-                    p.vy += 0.5; // gravity
-                    p.life -= 0.02;
-                    if(p.life > 0) {
-                        alive = true;
-                        ctx.globalAlpha = p.life;
-                        ctx.fillStyle = p.color;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, 5, 0, Math.PI*2);
-                        ctx.fill();
-                    }
-                });
-                if(alive) requestAnimationFrame(animate);
-                else ctx.clearRect(0,0,canvas.width,canvas.height);
-            }
-            animate();
-        }
-
+        // Initialize the application, which handles Firebase setup and authentication
+        initApp();
+        
     </script>
 </body>
 </html>
