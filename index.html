@@ -3,934 +3,942 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Nexus</title>
+    <title>Puzzle Nexus: Multiplayer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, arrayUnion, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase State
+        window.firebaseState = {
+            db: null,
+            auth: null,
+            user: null,
+            appId: null,
+            unsubscribeRoom: null
+        };
+
+        // --- FIREBASE INITIALIZATION ---
+        const initFirebase = async () => {
+            const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            const appId = window.__app_id || 'default-app';
+
+            window.firebaseState.db = db;
+            window.firebaseState.auth = auth;
+            window.firebaseState.appId = appId;
+
+            // Auth Flow
+            try {
+                if (window.__initial_auth_token) {
+                    await signInWithCustomToken(auth, window.__initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth failed:", error);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    window.firebaseState.user = user;
+                    window.AppState.userId = user.uid;
+                    window.initAppLogic(); // Start App after Auth
+                }
+            });
+        };
+
+        initFirebase();
+    </script>
+
     <style>
+        /* Custom Theme Colors */
         .text-gold-400 { color: #FFD700; }
         .bg-gold-600 { background-color: #FFC72C; }
         .hover\:bg-gold-700:hover { background-color: #FFB300; }
-        .shadow-gold-500\/50 { box-shadow: 0 10px 15px -3px rgba(255, 199, 44, 0.5), 0 4px 6px -4px rgba(255, 199, 44, 0.5); }
+        .border-gold-400 { border-color: #FFD700; }
         
-        .shadow-rainbow {
-            box-shadow: 
-                0 0 10px rgba(0, 255, 255, 0.4),
-                0 0 20px rgba(255, 215, 0, 0.4),
-                0 0 30px rgba(255, 0, 255, 0.2);
-        }
+        .shadow-glow { box-shadow: 0 0 15px rgba(45, 212, 191, 0.3); }
+        
+        /* Animation Classes */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
 
-        @keyframes fall {
-            0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
-            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
-        }
-        .confetti-piece {
-            position: absolute;
-            animation-name: fall;
-            animation-timing-function: linear;
-            animation-iteration-count: infinite;
-            border-radius: 50%;
-        }
+        @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .animate-pop { animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
 
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #1f2937; }
-        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+        /* Game Board Styles */
+        .grid-cell { aspect-ratio: 1; transition: all 0.2s; }
+        .grid-cell:active { transform: scale(0.95); }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen font-sans">
+<body class="bg-gray-900 text-white min-h-screen font-sans overflow-x-hidden selection:bg-teal-500 selection:text-white">
 
+    <!-- Main App Container -->
     <div id="app" class="min-h-screen flex flex-col">
-        <div class="flex items-center justify-center h-screen">
-            <div class="text-xl text-teal-400 animate-pulse">Initializing System...</div>
+        <!-- Loading Screen -->
+        <div class="flex flex-col items-center justify-center h-screen space-y-4">
+            <div class="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
+            <div class="text-xl text-teal-400 font-mono animate-pulse">Connecting to Nexus...</div>
         </div>
     </div>
 
+    <!-- Modal Portal -->
     <div id="modal-container"></div>
-    <div id="confetti-container"></div>
+    
+    <!-- Confetti Canvas -->
+    <canvas id="confetti-canvas" class="fixed inset-0 pointer-events-none z-50"></canvas>
 
     <script type="module">
-        /*
-         * PUZZLE NEXUS - Cross-Device Multiplayer Puzzle Game
-         * 
-         * Features:
-         * - 30 unique puzzles with 10 stages each (20 levels per stage)
-         * - Sequential Memory Matrix game with progressive difficulty
-         * - Star rating system (1-3 stars based on performance)
-         * - Cross-device multiplayer using persistent storage
-         * - Real-time chat in multiplayer rooms
-         * - Auto-refreshing lobby (updates every 2 seconds)
-         * - Progress tracking per user
-         * - Level unlocking system
-         * 
-         * How to play multiplayer:
-         * 1. Create a room and get a 4-letter code
-         * 2. Share the code with friends
-         * 3. They can join from ANY device by entering the code
-         * 4. Chat and compete together!
-         */
+        import { doc, setDoc, getDoc, updateDoc, arrayUnion, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // GAME CONSTANTS
-        const TOTAL_PUZZLES = 30;
-        const STAGES_PER_PUZZLE = 10;
-        const LEVELS_PER_STAGE = 20;
-
+        // --- GAME CONSTANTS ---
         const PUZZLE_NAMES = [
-            "Sequential Memory Matrix", "Ultimate Riddle Challenge", "Three Gods Logic", 
-            "Einstein's Riddle", "Knights & Knaves", "Monty Hall Simulator", 
-            "River Crossing", "Balance Scale Detective", "Logic Grids", "Masyu Loops", 
-            "Nonograms", "Rope Burning Timer", "Light Switch Puzzle", "Smudged Faces", 
-            "Zebra Variants", "Pattern Recognition", "Cryptarithmetic", "Towers of Hanoi", 
-            "Sliding Block Puzzle", "Pentominoes", "Sokoban", "Futoshiki", "Kakuro", 
-            "Skyscrapers", "Hashiwokakero", "Black Box Logic", "Ami-gami", 
-            "Stirling Numbers Challenge", "The Fifteen Puzzle", "Hidden Path Finder"
+            "Sequential Memory", 
+            "Light Switch Logic", 
+            "Pattern Simon", 
+            "Coming Soon..."
         ];
 
-        // STORAGE HELPER (Uses Claude's persistent storage for cross-device support)
-        const Store = {
-            get: async (key, shared = false) => {
-                try {
-                    const result = await window.storage.get(key, shared);
-                    return result ? JSON.parse(result.value) : null;
-                } catch { return null; }
-            },
-            set: async (key, val, shared = false) => {
-                try {
-                    await window.storage.set(key, JSON.stringify(val), shared);
-                    return true;
-                } catch { return false; }
-            },
-            list: async (prefix, shared = false) => {
-                try {
-                    const result = await window.storage.list(prefix, shared);
-                    return result ? result.keys : [];
-                } catch { return []; }
-            },
-            delete: async (key, shared = false) => {
-                try {
-                    await window.storage.delete(key, shared);
-                    return true;
-                } catch { return false; }
-            }
-        };
-
-        // APPLICATION STATE
-        const AppState = {
+        // --- APPLICATION STATE ---
+        window.AppState = {
             userId: null,
-            currentPage: 'home',
-            selectedPuzzle: null,
-            selectedStage: null,
-            userProgress: null,
-            activeRooms: [],
-            currentRoom: null,
-            useLocalStorage: true, // Flag to use local storage instead of Firebase
+            currentPage: 'loading',
+            activeRoom: null,
+            roomListener: null,
             
-            puzzleState: {
-                timer: 0,
-                isSolved: false,
+            // Single Player / Local State
+            selectedGameId: 0,
+            
+            // Game State
+            gameState: {
+                active: false,
+                score: 0,
                 mistakes: 0,
-                currentLevel: 0,
-                matrix: { size: 3, sequence: [], userSequence: [], display: true },
-                timerInterval: null
+                level: 1,
+                matrix: [], // For Memory
+                lights: [], // For Light Switch
+                pattern: [], // For Simon
+                userPattern: [],
+                timer: 0,
+                interval: null,
+                isDemo: false // True during "memorize" phase
             }
         };
 
-        // UTILITY FUNCTIONS
-        const generateRoomCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
-        
-        function showMessage(msg, title = 'Notification') {
-            const modalHtml = `
-                <div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center transition-opacity duration-300">
-                    <div class="bg-gray-700 p-8 rounded-xl shadow-2xl max-w-sm w-full text-center border-t-4 border-teal-500 transform transition duration-300 scale-100">
-                        <h4 class="text-2xl font-bold text-white mb-3">${title}</h4>
-                        <p class="text-gray-300 mb-6">${msg}</p>
-                        <button onclick="document.getElementById('modal-container').innerHTML = ''" 
-                            class="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg font-semibold transition duration-300">
-                            Close
-                        </button>
-                    </div>
-                </div>
-            `;
-            document.getElementById('modal-container').innerHTML = modalHtml;
-        }
-
-        function showConfetti() {
-            const container = document.getElementById('confetti-container');
-            container.innerHTML = `
-                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 50;">
-                    ${Array.from({ length: 50 }).map(() => {
-                        const size = Math.random() * 8 + 3;
-                        const left = Math.random() * 100;
-                        const animDelay = Math.random() * 2;
-                        const duration = Math.random() * 3 + 2;
-                        const color = `hsl(${Math.random() * 360}, 100%, 50%)`;
-                        return `<div class="confetti-piece" style="width: ${size}px; height: ${size}px; left: ${left}vw; background-color: ${color}; animation-delay: ${animDelay}s; animation-duration: ${duration}s;"></div>`;
-                    }).join('')}
-                </div>
-            `;
-            setTimeout(() => { container.innerHTML = ''; }, 3000);
-        }
-
-        // INITIALIZE USER PROGRESS
-        async function initializeProgress() {
-            const saved = await Store.get(`user:${AppState.userId}:progress`);
-            if (saved) {
-                AppState.userProgress = saved;
-            } else {
-                AppState.userProgress = {
-                    totalCompleted: 0,
-                    puzzles: PUZZLE_NAMES.reduce((acc, name, index) => {
-                        acc[index] = {
-                            name,
-                            currentStage: 0,
-                            currentLevel: 0,
-                            bestTime: 0,
-                            highScore: 0,
-                            levelsCompleted: 0,
-                            stages: Array(STAGES_PER_PUZZLE).fill(0).map(() => ({
-                                levels: Array(LEVELS_PER_STAGE).fill(0).map(() => ({ 
-                                    status: 'locked', 
-                                    score: 0, 
-                                    time: 0,
-                                    stars: 0
-                                }))
-                            }))
-                        };
-                        // Unlock first level of first stage of first puzzle
-                        if (index === 0) {
-                            acc[index].stages[0].levels[0].status = 'unlocked';
-                        }
-                        return acc;
-                    }, {}),
-                    achievements: []
-                };
-                await saveProgress();
-            }
-        }
-
-        async function saveProgress() {
-            await Store.set(`user:${AppState.userId}:progress`, AppState.userProgress);
-        }
-
-        // MULTIPLAYER SERVICE (Cross-device with shared storage)
-        const MultiplayerService = {
+        // --- FIRESTORE SERVICE ---
+        const Service = {
+            // Helpers
+            getDb: () => window.firebaseState.db,
+            getUserId: () => window.firebaseState.user.uid,
+            getAppId: () => window.firebaseState.appId,
+            
+            // Room Management
             async createRoom(mode) {
-                const roomCode = generateRoomCode();
-                const room = {
-                    roomCode,
-                    mode,
-                    createdAt: Date.now(),
-                    status: 'waiting',
-                    players: [{ 
-                        id: AppState.userId, 
-                        name: `Player-${AppState.userId.substring(0, 6)}`, 
-                        status: 'ready', 
-                        score: 0 
+                const code = Math.random().toString(36).substring(2, 6).toUpperCase();
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                
+                const roomData = {
+                    roomCode: code,
+                    hostId: this.getUserId(),
+                    mode: mode,
+                    status: 'waiting', // waiting, playing
+                    gameType: null,
+                    gameSeed: null, // For syncing random generation
+                    players: [{
+                        id: this.getUserId(),
+                        name: `Player ${this.getUserId().substr(0,4)}`,
+                        score: 0,
+                        isHost: true
                     }],
-                    hostId: AppState.userId,
                     chat: []
                 };
-                await Store.set(`room:${roomCode}`, room, true); // shared=true for cross-device
-                return room;
+
+                await setDoc(roomRef, roomData);
+                return code;
             },
-            
+
             async joinRoom(code) {
-                const room = await Store.get(`room:${code}`, true);
-                if (!room) return 'ROOM_NOT_FOUND';
-                if (room.status !== 'waiting') return 'GAME_IN_PROGRESS';
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                const snap = await getDoc(roomRef);
+
+                if (!snap.exists()) throw new Error("Room not found");
                 
-                const playerExists = room.players.some(p => p.id === AppState.userId);
-                if (!playerExists) {
-                    room.players.push({
-                        id: AppState.userId,
-                        name: `Player-${AppState.userId.substring(0, 6)}`,
-                        status: 'ready',
-                        score: 0
-                    });
-                    await Store.set(`room:${code}`, room, true);
-                }
+                const room = snap.data();
+                if (room.players.some(p => p.id === this.getUserId())) return room; // Already in
+
+                const newPlayer = {
+                    id: this.getUserId(),
+                    name: `Player ${this.getUserId().substr(0,4)}`,
+                    score: 0,
+                    isHost: false
+                };
+
+                await updateDoc(roomRef, {
+                    players: arrayUnion(newPlayer)
+                });
                 return room;
             },
-            
-            async sendMessage(code, message) {
-                const room = await Store.get(`room:${code}`, true);
-                if (room) {
-                    room.chat.push({
-                        senderId: AppState.userId,
-                        senderName: `Player-${AppState.userId.substring(0, 6)}`,
-                        text: message,
-                        timestamp: Date.now()
-                    });
-                    await Store.set(`room:${code}`, room, true);
-                }
+
+            async sendChat(code, message) {
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                const chatMsg = {
+                    sender: `Player ${this.getUserId().substr(0,4)}`,
+                    text: message,
+                    time: Date.now(),
+                    uid: this.getUserId()
+                };
+                // Read-modify-write for chat to append simply (or use arrayUnion)
+                await updateDoc(roomRef, { chat: arrayUnion(chatMsg) });
             },
-            
-            async getActiveRooms() {
-                const keys = await Store.list('room:', true);
-                const rooms = [];
-                for (const key of keys) {
-                    const room = await Store.get(key, true);
-                    if (room && room.status === 'waiting') {
-                        rooms.push(room);
-                    }
-                }
-                return rooms;
+
+            async updateScore(code, score) {
+                // In a real app, we'd use a transaction or map update. 
+                // For this structure, we read, map, and write.
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                const snap = await getDoc(roomRef);
+                if (!snap.exists()) return;
+                
+                const players = snap.data().players.map(p => {
+                    if (p.id === this.getUserId()) return { ...p, score: score };
+                    return p;
+                });
+                
+                await updateDoc(roomRef, { players });
             },
-            
-            async getRoom(code) {
-                return await Store.get(`room:${code}`, true);
+
+            async setGameStatus(code, gameType, status, seed) {
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                await updateDoc(roomRef, {
+                    gameType,
+                    status, 
+                    gameSeed: seed || Math.floor(Math.random() * 100000)
+                });
+            },
+
+            // Real-time listener
+            subscribeToRoom(code, callback) {
+                const roomRef = doc(this.getDb(), 'artifacts', this.getAppId(), 'public', 'data', 'rooms', code);
+                return onSnapshot(roomRef, (doc) => {
+                    if (doc.exists()) callback(doc.data());
+                    else callback(null);
+                });
             }
         };
 
-        // INIT APP
-        async function initApp() {
-            // Generate user ID
-            let userId = localStorage.getItem('userId');
-            if (!userId) {
-                userId = 'user_' + Math.random().toString(36).substring(2, 11);
-                localStorage.setItem('userId', userId);
-            }
-            AppState.userId = userId;
-            
-            // Initialize progress
-            await initializeProgress();
-            
-            // Load rooms
-            AppState.activeRooms = await MultiplayerService.getActiveRooms();
-            
-            // Ready to render
-            AppState.currentPage = 'home';
+        // --- APP LOGIC INITIALIZATION ---
+        window.initAppLogic = () => {
+            window.navTo('home');
+        };
+
+        // --- ROUTING & NAVIGATION ---
+        window.navTo = (page) => {
+            window.AppState.currentPage = page;
             renderApp();
+        };
+
+        // --- GAME LOGIC ---
+
+        // 1. Sequential Memory
+        function initSequentialMemory(level, seed) {
+            // Seeded random for Multiplayer sync
+            const rng = mulberry32(seed ? seed + level : Date.now());
+            const size = 3 + Math.floor(level / 3);
+            const sequenceLength = 3 + level;
+            const sequence = [];
             
-            // Start polling for room updates if in a room
-            startRoomPolling();
+            for(let i=0; i<sequenceLength; i++) {
+                const r = Math.floor(rng() * size);
+                const c = Math.floor(rng() * size);
+                sequence.push(`${r}-${c}`);
+            }
+
+            return {
+                type: 'memory',
+                gridSize: size,
+                sequence,
+                userSequence: [],
+                status: 'memorize' // memorize -> input -> success/fail
+            };
         }
 
-        // Poll for room updates (for real-time multiplayer feel)
-     // Poll for room updates (for real-time multiplayer feel)
-        let roomPollInterval = null;
-        let lastPlayerCount = 0;
-        
-        function startRoomPolling() {
-            if (roomPollInterval) clearInterval(roomPollInterval);
+        // 2. Light Switch (Lights Out)
+        function initLightSwitch(level, seed) {
+            const rng = mulberry32(seed ? seed + level : Date.now());
+            const size = 5;
+            // Create solved board (all off) then scramble
+            let board = Array(size).fill().map(() => Array(size).fill(false));
             
-            roomPollInterval = setInterval(async () => {
-                if (AppState.currentRoom) {
-                    const updated = await MultiplayerService.getRoom(AppState.currentRoom.roomCode);
-                    if (updated) {
-                        // Check if new player joined
-                        if (updated.players.length > lastPlayerCount && lastPlayerCount > 0) {
-                            const newPlayer = updated.players[updated.players.length - 1];
-                            if (newPlayer.id !== AppState.userId) {
-                                showMessage(`${newPlayer.name} joined the room!`, '👋 New Player');
-                            }
-                        }
-                        lastPlayerCount = updated.players.length;
-                        AppState.currentRoom = updated;
-                        if (AppState.currentPage === 'lobby') renderApp();
-                    }
-                    // Note: Room not being found doesn't mean it was deleted, could be a storage error
-                }
-                if (AppState.currentPage === 'lobby' && !AppState.currentRoom) {
-                    AppState.activeRooms = await MultiplayerService.getActiveRooms();
-                    renderApp();
-                }
-            }, 2000); // Poll every 2 seconds
+            // Scramble
+            const moves = 5 + level * 2;
+            for(let i=0; i<moves; i++) {
+                const r = Math.floor(rng() * size);
+                const c = Math.floor(rng() * size);
+                toggleLights(board, r, c, size);
+            }
+
+            return {
+                type: 'lights',
+                gridSize: size,
+                board: board,
+                moves: 0,
+                status: 'playing'
+            };
         }
-        // RENDER FUNCTIONS
+
+        function toggleLights(board, r, c, size) {
+            const dirs = [[0,0], [0,1], [0,-1], [1,0], [-1,0]];
+            dirs.forEach(([dr, dc]) => {
+                const nr = r + dr, nc = c + dc;
+                if(nr >= 0 && nr < size && nc >= 0 && nc < size) {
+                    board[nr][nc] = !board[nr][nc];
+                }
+            });
+        }
+
+        // 3. Simon Pattern
+        function initSimon(level, seed) {
+            const rng = mulberry32(seed ? seed + level : Date.now());
+            const length = 3 + level;
+            const sequence = [];
+            for(let i=0; i<length; i++) sequence.push(Math.floor(rng() * 4));
+            
+            return {
+                type: 'simon',
+                sequence,
+                userStep: 0,
+                status: 'watch'
+            };
+        }
+
+        // RNG for Sync
+        function mulberry32(a) {
+            return function() {
+                var t = a += 0x6D2B79F5;
+                t = Math.imul(t ^ t >>> 15, t | 1);
+                t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            }
+        }
+
+        // --- RENDERERS ---
+
         function renderHeader() {
-            const pages = [
-                { name: 'Home', key: 'home', icon: 'fa-home' },
-                { name: 'Multiplayer', key: 'lobby', icon: 'fa-globe' },
-                { name: 'Profile', key: 'profile', icon: 'fa-user' },
-            ];
-
             return `
-                <header class="bg-gray-800 shadow-xl sticky top-0 z-20 border-b border-teal-600/50">
-                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
-                        <div class="flex items-center space-x-6">
-                            <button onclick="window.navTo('home')" class="text-2xl sm:text-3xl font-extrabold text-teal-400 hover:text-teal-300 transition duration-300">
-                                PUZZLE NEXUS
-                            </button>
-                            <nav class="hidden md:flex space-x-4">
-                                ${pages.map(page => `
-                                    <button onclick="window.navTo('${page.key}')" 
-                                        class="px-3 py-2 rounded-lg font-medium transition duration-300 flex items-center gap-2 ${AppState.currentPage === page.key ? 'bg-teal-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
-                                        <i class="fa-solid ${page.icon}"></i> ${page.name}
-                                    </button>
-                                `).join('')}
-                            </nav>
+                <nav class="bg-gray-800 border-b border-teal-900 sticky top-0 z-30 shadow-lg">
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div class="flex items-center justify-between h-16">
+                            <div class="flex items-center gap-3 cursor-pointer" onclick="window.navTo('home')">
+                                <i class="fa-solid fa-layer-group text-teal-400 text-2xl"></i>
+                                <span class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-teal-200">
+                                    PUZZLE NEXUS
+                                </span>
+                            </div>
+                            <div class="flex items-center gap-4">
+                                <button onclick="window.navTo('home')" class="text-gray-300 hover:text-white transition">
+                                    <i class="fa-solid fa-home"></i>
+                                </button>
+                                <div class="h-6 w-px bg-gray-700"></div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                                    <span class="text-xs text-gray-400 font-mono">${window.AppState.userId ? window.AppState.userId.substr(0,6) : '...'}</span>
+                                </div>
+                            </div>
                         </div>
-                        <button onclick="window.resetProgress()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-300 shadow-md">
-                            Reset Data
-                        </button>
                     </div>
-                </header>
+                </nav>
             `;
         }
 
         function renderHome() {
-            const nextPuzzleIndex = Object.keys(AppState.userProgress.puzzles).find(i => {
-                const p = AppState.userProgress.puzzles[i];
-                return p.levelsCompleted < STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
-            }) || 0;
+            return `
+                <div class="max-w-7xl mx-auto px-4 py-12 w-full animate-fade-in">
+                    <div class="text-center mb-12">
+                        <h1 class="text-5xl font-extrabold text-white mb-4 tracking-tight">
+                            Master the <span class="text-teal-400">Grid</span>
+                        </h1>
+                        <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                            Challenge your logic and memory. Play solo to train or create a room to compete in real-time cross-device battles.
+                        </p>
+                    </div>
 
-            const puzzles = Object.values(AppState.userProgress.puzzles).map((puzzle, index) => {
-                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
-                const progress = Math.floor((puzzle.levelsCompleted / totalLevels) * 100);
-                const isNext = parseInt(index) === parseInt(nextPuzzleIndex);
-                
-                return `
-                    <div onclick="window.goToStageSelect(${index})" 
-                        class="bg-gray-800 p-5 rounded-xl cursor-pointer transition transform duration-300 hover:scale-[1.03] ${isNext ? 'shadow-lg shadow-teal-400/50 ring-2 ring-teal-400' : 'hover:shadow-lg hover:shadow-gold-500/30'}">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-xl font-extrabold ${isNext ? 'text-teal-400' : 'text-white'}">${puzzle.name}</h3>
-                            <div class="text-xs font-semibold px-2 py-1 rounded-full ${progress === 100 ? 'bg-green-600 text-white' : 'bg-gray-700 text-teal-400'}">
-                                ${progress}%
+                    <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                        <!-- Multiplayer Card -->
+                        <div class="group relative bg-gradient-to-br from-gray-800 to-gray-900 p-8 rounded-2xl border border-gray-700 hover:border-gold-400 transition-all duration-300 shadow-xl overflow-hidden">
+                            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                                <i class="fa-solid fa-users text-9xl text-gold-400"></i>
+                            </div>
+                            <h2 class="text-3xl font-bold text-white mb-2 flex items-center gap-3">
+                                <i class="fa-solid fa-globe text-gold-400"></i> Multiplayer
+                            </h2>
+                            <p class="text-gray-400 mb-8">Create a lobby and invite friends. Compete on the same puzzle seed.</p>
+                            
+                            <div class="space-y-3 relative z-10">
+                                <button onclick="window.createRoom('public')" class="w-full py-3 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg transition transform active:scale-95 shadow-lg shadow-gold-500/20">
+                                    Create Room
+                                </button>
+                                <div class="flex gap-2">
+                                    <input id="room-code-input" type="text" placeholder="CODE" maxlength="4" class="w-24 bg-gray-950 border border-gray-700 rounded-lg px-3 text-center font-mono text-xl uppercase focus:border-gold-400 outline-none text-white">
+                                    <button onclick="window.joinRoomInput()" class="flex-1 py-3 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white font-bold rounded-lg transition">
+                                        Join Room
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <p class="text-sm text-gray-400 mb-4">Stage ${puzzle.currentStage + 1}, Level ${puzzle.currentLevel + 1}</p>
-                        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
-                            <div class="h-full ${isNext ? 'bg-teal-500' : 'bg-yellow-500'}" style="width: ${progress}%"></div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
 
-            return `
-                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-                    <h1 class="text-5xl font-extrabold text-white mb-4">Welcome Back!</h1>
-                    <p class="text-lg text-gray-400 mb-10">User ID: <span class="text-sm text-gold-400 bg-gray-700 p-1 rounded-md font-mono">${AppState.userId}</span></p>
-
-                    <section class="mb-12 p-6 bg-gray-800 rounded-xl shadow-lg border border-teal-600/50">
-                        <h2 class="text-3xl font-bold text-yellow-400 mb-4">Quick Actions</h2>
-                        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                            <button onclick="window.goToStageSelect(${nextPuzzleIndex})" class="flex-1 py-3 px-6 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg shadow-lg">
-                                Continue Adventure
-                            </button>
-                            <button onclick="window.navTo('lobby')" class="flex-1 py-3 px-6 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg shadow-lg">
-                                Multiplayer Lobby
-                            </button>
-                        </div>
-                    </section>
-
-                    <section>
-                        <h2 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-2">All Puzzles</h2>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            ${puzzles}
-                        </div>
-                    </section>
-                </div>
-            `;
-        }
-
-        function renderStageSelect() {
-            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
-            
-            const stagesHtml = puzzle.stages.map((stage, index) => {
-                const isUnlocked = index === 0 || puzzle.stages[index-1].levels.some(l => l.status === 'completed');
-                const completedCount = stage.levels.filter(l => l.status === 'completed').length;
-                const progress = Math.floor((completedCount / LEVELS_PER_STAGE) * 100);
-                
-                return `
-                    <div onclick="${isUnlocked ? `window.goToLevelSelect(${index})` : ''}" 
-                        class="p-5 rounded-xl shadow-lg transition transform duration-300 ${isUnlocked ? 'bg-gray-800 cursor-pointer hover:scale-[1.05] hover:shadow-yellow-500/50' : 'bg-gray-900 opacity-50 cursor-not-allowed'}">
-                        <h3 class="text-2xl font-bold text-gold-400 mb-2">Stage ${index + 1}</h3>
-                        <p class="text-sm text-gray-300">${isUnlocked ? 'Unlocked' : 'Locked'}</p>
-                        <div class="mt-3">
-                            <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
-                                <div class="h-full bg-teal-500" style="width: ${progress}%"></div>
+                        <!-- Solo Card -->
+                        <div class="group relative bg-gradient-to-br from-gray-800 to-gray-900 p-8 rounded-2xl border border-gray-700 hover:border-teal-400 transition-all duration-300 shadow-xl overflow-hidden">
+                             <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                                <i class="fa-solid fa-brain text-9xl text-teal-400"></i>
                             </div>
-                            <p class="text-xs text-gray-500 mt-1">${completedCount}/${LEVELS_PER_STAGE} Done</p>
+                            <h2 class="text-3xl font-bold text-white mb-2 flex items-center gap-3">
+                                <i class="fa-solid fa-user-astronaut text-teal-400"></i> Solo Training
+                            </h2>
+                            <p class="text-gray-400 mb-8">Hone your skills. Select a challenge module.</p>
+                            
+                            <div class="grid grid-cols-1 gap-3 relative z-10">
+                                <button onclick="window.startSoloGame(0)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
+                                    <span>Sequential Memory</span> <i class="fa-solid fa-play opacity-0 group-hover:opacity-100 transition"></i>
+                                </button>
+                                <button onclick="window.startSoloGame(1)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
+                                    <span>Light Switch Logic</span> <i class="fa-solid fa-lightbulb opacity-0 group-hover:opacity-100 transition"></i>
+                                </button>
+                                <button onclick="window.startSoloGame(2)" class="py-3 px-4 bg-gray-700 hover:bg-teal-600/20 hover:text-teal-400 text-left rounded-lg transition flex items-center justify-between group-hover:border-teal-500/30 border border-transparent">
+                                    <span>Simon Pattern</span> <i class="fa-solid fa-music opacity-0 group-hover:opacity-100 transition"></i>
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-                    <button onclick="window.navTo('home')" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
-                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Puzzles
-                    </button>
-                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name}</h1>
-                    <p class="text-lg text-gray-400 mb-8">Select a Stage</p>
-                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6">
-                        ${stagesHtml}
                     </div>
                 </div>
             `;
         }
 
-        function renderLevelSelect() {
-            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
-            const stage = puzzle.stages[AppState.selectedStage];
-
-            const levelsHtml = stage.levels.map((level, index) => {
-                const isUnlocked = level.status === 'unlocked' || level.status === 'completed';
-                const isCompleted = level.status === 'completed';
-                const isLocked = !isUnlocked;
-                
-                let bgClass = isLocked ? 'bg-gray-900/50 cursor-not-allowed' : isCompleted ? 'bg-green-800/50 hover:bg-green-700/70 cursor-pointer' : 'bg-gray-800 hover:bg-gray-700 cursor-pointer';
-                
-                const starCount = level.stars || 0;
-                const starsHtml = Array(3).fill(0).map((_, i) => 
-                    `<span class="text-lg ${i < starCount ? 'text-yellow-400' : 'text-gray-600'}">★</span>`
-                ).join('');
-
-                return `
-                    <div onclick="${isUnlocked ? `window.startPuzzle(${index})` : ''}" 
-                        class="p-3 rounded-xl shadow-lg transition transform duration-300 text-center ${bgClass}">
-                        <div class="text-xl font-bold mb-1 ${isLocked ? 'text-gray-600' : 'text-white'}">Lvl ${index + 1}</div>
-                        ${isCompleted ? `<div class="flex justify-center">${starsHtml}</div>` : 
-                          isLocked ? '<span class="text-red-500 text-3xl">🔒</span>' : 
-                          '<span class="text-teal-400 text-xl font-bold">PLAY</span>'}
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-                    <button onclick="window.goToStageSelect(${AppState.selectedPuzzle})" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
-                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Stages
-                    </button>
-                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name} - Stage ${AppState.selectedStage + 1}</h1>
-                    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4 mt-8">
-                        ${levelsHtml}
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderPuzzle() {
-            const puzzleName = PUZZLE_NAMES[AppState.selectedPuzzle];
-            const { timer, mistakes, isSolved, matrix } = AppState.puzzleState;
-            
-            let gridHtml = '';
-            if (puzzleName === 'Sequential Memory Matrix') {
-                const { size, sequence, userSequence, display } = matrix;
-                const cells = [];
-                
-                for(let r=0; r<size; r++) {
-                    for(let c=0; c<size; c++) {
-                        const pos = `${r}-${c}`;
-                        const isInSequence = sequence.includes(pos);
-                        const isClicked = userSequence.includes(pos);
-                        
-                        let cellClass = 'w-12 h-12 sm:w-16 sm:h-16 rounded-lg border-2 flex items-center justify-center font-bold text-xl ';
-                        
-                        if (display) {
-                            cellClass += isInSequence ? 'bg-teal-500 border-teal-400' : 'bg-gray-800 border-gray-700';
-                        } else if (isSolved) {
-                            cellClass += isInSequence ? 'bg-green-500 border-green-400' : 'bg-gray-800 border-gray-700';
-                        } else {
-                            cellClass += isClicked ? 'bg-yellow-500 border-yellow-400' : 'bg-gray-800 border-gray-700 hover:bg-gray-600 cursor-pointer';
-                        }
-                        
-                        cells.push(`<div onclick="window.handleGameClick(${r}, ${c})" class="${cellClass}">${isClicked ? '✓' : ''}</div>`);
-                    }
-                }
-                
-                gridHtml = `
-                    <div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">
-                        ${cells.join('')}
-                    </div>
-                `;
-            } else {
-                gridHtml = `
-                    <div class="text-center p-10 bg-gray-800 rounded-xl">
-                        <p class="mb-4">Simulation placeholder for <b>${puzzleName}</b>.</p>
-                        <button onclick="window.solvePuzzleSim()" class="bg-green-600 text-white px-4 py-2 rounded">Simulate Win</button>
-                    </div>
-                `;
-            }
-
-            return `
-                <div class="max-w-4xl mx-auto px-4 py-10 w-full text-center">
-                    <button onclick="window.exitPuzzle()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
-                        <i class="fa-solid fa-arrow-left mr-2"></i> Exit Level
-                    </button>
-                    <h1 class="text-4xl font-extrabold text-white mb-6">${puzzleName}</h1>
-                    
-                    <div class="flex justify-between items-center mb-8 p-4 bg-gray-800 rounded-xl shadow-inner max-w-lg mx-auto">
-                        <div class="text-center w-1/3">
-                            <p class="text-xs text-gray-400 uppercase">Time</p>
-                            <p id="timer-display" class="text-3xl font-bold text-white">${timer}s</p>
-                        </div>
-                        <div class="text-center w-1/3 border-l border-r border-gray-700">
-                            <p class="text-xs text-gray-400 uppercase">Mistakes</p>
-                            <p class="text-3xl font-bold text-red-400">${mistakes}</p>
-                        </div>
-                        <div class="text-center w-1/3">
-                            <p class="text-xs text-gray-400 uppercase">Status</p>
-                            <p class="text-xl font-bold ${isSolved ? 'text-green-400' : 'text-teal-400'}">
-                                ${isSolved ? 'SOLVED' : matrix.display ? 'MEMORIZE' : 'PLAY'}
-                            </p>
-                        </div>
-                    </div>
-
-                    ${gridHtml}
-                </div>
-            `;
-        }
-        
         function renderLobby() {
-            if (AppState.currentRoom) {
-                const r = AppState.currentRoom;
-                return `
-                    <div class="max-w-4xl mx-auto px-4 py-10 w-full">
-                        <button onclick="window.leaveRoom()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
-                            <i class="fa-solid fa-arrow-left mr-2"></i> Leave Room
-                        </button>
-                        <div class="flex items-center justify-between mb-2">
-                            <h1 class="text-4xl font-extrabold text-teal-400">Room: ${r.roomCode}</h1>
-                            <button onclick="window.copyRoomCode('${r.roomCode}')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
-                                <i class="fa-solid fa-copy"></i> Copy Code
-                            </button>
-                        </div>
-                        <p class="text-gray-400 mb-2">Mode: ${r.mode} | Status: ${r.status}</p>
-                        <p class="text-xs text-teal-400 mb-6 flex items-center gap-2">
-                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Updates every 2 seconds
-                        </p>
+            const room = window.AppState.activeRoom;
+            if (!room) return `<div class="p-10 text-center">Loading Room...</div>`;
 
-                        <div class="grid md:grid-cols-2 gap-6">
-                            <div class="bg-gray-800 p-6 rounded-xl">
-                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players (${r.players.length})</h3>
-                                <div class="space-y-2">
-                                    ${r.players.map(p => `
-                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50 ring-1 ring-teal-500' : 'bg-gray-700'}">
-                                            <div class="w-2 h-2 rounded-full mr-2 ${p.status === 'ready' ? 'bg-green-500' : 'bg-red-500'}"></div>
-                                            <span>${p.name}${p.id === AppState.userId ? ' (You)' : ''}</span>
-                                            <span class="ml-auto text-sm text-gray-400">${p.score} pts</span>
-                                        </div>
-                                    `).join('')}
+            const isHost = room.hostId === window.AppState.userId;
+
+            // Chat HTML
+            const chatHtml = room.chat.map(msg => `
+                <div class="mb-2 ${msg.uid === window.AppState.userId ? 'text-right' : 'text-left'}">
+                    <span class="text-xs text-gray-500 block">${msg.sender}</span>
+                    <span class="inline-block px-3 py-1 rounded-lg text-sm ${msg.uid === window.AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
+                        ${msg.text}
+                    </span>
+                </div>
+            `).join('');
+
+            return `
+                <div class="max-w-6xl mx-auto px-4 py-8 h-[calc(100vh-64px)] flex flex-col md:flex-row gap-6 animate-fade-in">
+                    
+                    <!-- Sidebar: Players & Controls -->
+                    <div class="w-full md:w-1/3 flex flex-col gap-6">
+                        <div class="bg-gray-800 rounded-xl p-6 border border-teal-500/30 shadow-lg">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <h2 class="text-sm text-teal-400 font-bold uppercase tracking-wider">Room Code</h2>
+                                    <p class="text-4xl font-mono font-extrabold text-white tracking-widest cursor-pointer hover:text-gold-400 transition" onclick="window.copyCode('${room.roomCode}')" title="Click to Copy">${room.roomCode}</p>
                                 </div>
+                                <button onclick="window.leaveRoom()" class="text-red-400 hover:bg-red-900/30 p-2 rounded transition"><i class="fa-solid fa-sign-out-alt"></i></button>
                             </div>
-
-                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-96">
-                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Chat</h3>
-                                <div id="chat-box" class="flex-1 overflow-y-auto mb-2 space-y-2 p-2 bg-gray-900 rounded">
-                                    ${r.chat.length === 0 ? '<p class="text-gray-500 text-sm text-center mt-4">No messages yet...</p>' : r.chat.map(msg => `
-                                        <div class="text-sm ${msg.senderId === AppState.userId ? 'text-right' : 'text-left'}">
-                                            <span class="inline-block px-2 py-1 rounded ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
-                                                <b>${msg.senderName}:</b> ${msg.text}
-                                            </span>
+                            
+                            <h3 class="font-bold text-gray-400 mb-3 text-sm uppercase">Players</h3>
+                            <div class="space-y-2 mb-6">
+                                ${room.players.map(p => `
+                                    <div class="flex items-center justify-between p-3 rounded bg-gray-700/50 border border-gray-700 ${p.id === window.AppState.userId ? 'border-teal-500/50' : ''}">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-gray-600 to-gray-700 flex items-center justify-center text-xs font-bold">
+                                                ${p.name.slice(-2)}
+                                            </div>
+                                            <span class="${p.id === window.AppState.userId ? 'text-teal-400 font-bold' : 'text-gray-300'}">${p.name}</span>
+                                            ${p.id === room.hostId ? '<i class="fa-solid fa-crown text-gold-400 text-xs"></i>' : ''}
                                         </div>
-                                    `).join('')}
-                                </div>
-                                <form onsubmit="window.sendChat(event)" class="flex">
-                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type a message..." required>
-                                    <button type="submit" class="bg-gold-600 hover:bg-gold-700 px-4 rounded-r font-bold text-gray-900">Send</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            } else {
-                return `
-                    <div class="max-w-6xl mx-auto px-4 py-10 w-full">
-                        <h1 class="text-4xl font-extrabold text-white mb-2">Multiplayer Lobby</h1>
-                        <p class="text-sm text-teal-400 mb-6 flex items-center gap-2">
-                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Cross-device multiplayer enabled • Rooms auto-refresh
-                        </p>
-                        
-                        <div class="bg-gray-800 p-6 rounded-xl mb-8 border border-gold-600/50 shadow-lg">
-                            <h2 class="text-2xl font-bold text-gold-400 mb-4">Create or Join</h2>
-                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                                <button onclick="window.createRoom('1v1')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 1v1</button>
-                                <button onclick="window.createRoom('2v2')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 2v2</button>
-                            </div>
-                            <div class="flex gap-2">
-                                <input id="room-code-input" type="text" maxlength="4" placeholder="Enter 4-Letter Code" class="flex-1 bg-gray-700 rounded px-4 py-2 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none">
-                                <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-6 rounded">Join</button>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-3">💡 Share the room code with friends on other devices to play together!</p>
-                        </div>
-
-                        <h2 class="text-2xl font-bold mb-4">Active Public Rooms</h2>
-                        <div class="space-y-3">
-                            ${AppState.activeRooms.length === 0 ? '<p class="text-gray-500">No active rooms found. Create one!</p>' : 
-                                AppState.activeRooms.map(r => `
-                                    <div class="flex justify-between items-center p-4 bg-gray-800 rounded hover:bg-gray-700 transition">
-                                        <div>
-                                            <span class="text-teal-400 font-bold text-lg mr-2">${r.roomCode}</span>
-                                            <span class="text-gray-400 text-sm">${r.mode}</span>
-                                            <span class="text-gray-500 text-xs ml-2">(${r.players.length} player${r.players.length > 1 ? 's' : ''})</span>
-                                        </div>
-                                        <button onclick="window.joinRoom('${r.roomCode}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm">Join</button>
+                                        <span class="font-mono font-bold text-white">${p.score} pts</span>
                                     </div>
                                 `).join('')}
+                            </div>
+
+                            ${isHost ? `
+                                <div class="space-y-2">
+                                    <p class="text-xs text-gray-400 mb-1">Select Game to Start:</p>
+                                    <div class="grid grid-cols-3 gap-2 mb-2">
+                                        <button onclick="window.selectLobbyGame(0)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 0 ? 'bg-teal-600 border-teal-400' : ''}">Memory</button>
+                                        <button onclick="window.selectLobbyGame(1)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 1 ? 'bg-teal-600 border-teal-400' : ''}">Lights</button>
+                                        <button onclick="window.selectLobbyGame(2)" class="p-2 rounded border border-gray-600 hover:bg-gray-700 text-xs text-center transition ${window.AppState.selectedGameId === 2 ? 'bg-teal-600 border-teal-400' : ''}">Simon</button>
+                                    </div>
+                                    <button onclick="window.startGameForRoom()" class="w-full py-3 bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-400 hover:to-green-400 text-white font-bold rounded-lg shadow-glow transition transform active:scale-95">
+                                        START ROUND
+                                    </button>
+                                </div>
+                            ` : `
+                                <div class="text-center p-4 bg-gray-900/50 rounded border border-gray-700 border-dashed">
+                                    <p class="text-sm text-gray-400 animate-pulse">Waiting for host to start...</p>
+                                </div>
+                            `}
                         </div>
                     </div>
-                `;
-            }
-        }
-        
-        function renderProfile() {
-            const completed = Object.values(AppState.userProgress.puzzles).filter(p => {
-                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
-                return p.levelsCompleted === totalLevels;
-            }).length;
-            
-            return `
-                <div class="max-w-6xl mx-auto px-4 py-10 w-full">
-                    <h1 class="text-4xl font-extrabold text-teal-400 mb-2">Profile</h1>
-                    <p class="text-xl text-gray-400 mb-8">User: <span class="text-gold-400">${AppState.userId}</span></p>
 
-                    <div class="grid md:grid-cols-3 gap-6 mb-8">
-                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-teal-500 shadow-lg">
-                            <p class="text-gray-400 text-sm">Puzzles Mastered</p>
-                            <p class="text-5xl font-extrabold text-white mt-2">${completed} / ${TOTAL_PUZZLES}</p>
-                        </div>
-                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-yellow-500 shadow-lg">
-                            <p class="text-gray-400 text-sm">Total Levels Completed</p>
-                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.totalCompleted}</p>
-                        </div>
-                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-red-500 shadow-lg">
-                            <p class="text-gray-400 text-sm">Achievements</p>
-                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.achievements.length}</p>
-                        </div>
+                    <!-- Main Area: Chat or Game Board -->
+                    <div class="flex-1 flex flex-col bg-gray-800 rounded-xl overflow-hidden shadow-2xl border border-gray-700">
+                        ${room.status === 'playing' ? renderActiveGame(room) : `
+                            <!-- Chat View -->
+                            <div class="flex-1 p-4 overflow-y-auto space-y-2 bg-gray-900/30" id="chat-box">
+                                ${chatHtml.length ? chatHtml : '<div class="h-full flex items-center justify-center text-gray-600">No messages yet. Say hi!</div>'}
+                            </div>
+                            <form onsubmit="window.submitChat(event)" class="p-4 bg-gray-800 border-t border-gray-700 flex gap-2">
+                                <input id="chat-input" type="text" placeholder="Type a message..." class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:border-teal-500 outline-none">
+                                <button type="submit" class="bg-teal-600 hover:bg-teal-700 px-6 py-2 rounded-lg text-white font-bold transition">Send</button>
+                            </form>
+                        `}
                     </div>
                 </div>
             `;
         }
 
-        function renderApp() {
-            const app = document.getElementById('app');
-            app.innerHTML = '';
+        function renderActiveGame(room) {
+            // Depending on gameType, render the specific game board
+            // room.gameType: 0 (Memory), 1 (Lights), 2 (Simon)
+            const gameData = window.AppState.gameState;
             
-            app.innerHTML += renderHeader();
-
-            let contentHtml = '';
-            switch(AppState.currentPage) {
-                case 'home': contentHtml = renderHome(); break;
-                case 'stageSelect': contentHtml = renderStageSelect(); break;
-                case 'levelSelect': contentHtml = renderLevelSelect(); break;
-                case 'puzzle': contentHtml = renderPuzzle(); break;
-                case 'lobby': contentHtml = renderLobby(); break;
-                case 'profile': contentHtml = renderProfile(); break;
-                default: contentHtml = renderHome(); break;
-            }
-            
-            const main = document.createElement('main');
-            main.className = 'flex-grow';
-            main.innerHTML = contentHtml;
-            app.appendChild(main);
-            
-            if (AppState.currentPage === 'lobby' && AppState.currentRoom) {
-                const box = document.getElementById('chat-box');
-                if(box) {
-                    // Scroll to bottom smoothly
-                    setTimeout(() => box.scrollTop = box.scrollHeight, 100);
-                }
-            }
-        }
-
-        // ACTION HANDLERS
-        window.navTo = async (page) => { 
-            AppState.currentPage = page; 
-            if (page === 'lobby') {
-                AppState.activeRooms = await MultiplayerService.getActiveRooms();
-            }
-            renderApp(); 
-        };
-        
-        window.goToStageSelect = (puzzleIdx) => { 
-            AppState.selectedPuzzle = puzzleIdx; 
-            AppState.currentPage = 'stageSelect'; 
-            renderApp(); 
-        };
-        
-        window.goToLevelSelect = (stageIdx) => { 
-            AppState.selectedStage = stageIdx; 
-            AppState.currentPage = 'levelSelect'; 
-            renderApp(); 
-        };
-
-        window.resetProgress = async () => {
-            if (confirm('⚠️ This will delete ALL your progress and data. Continue?')) {
-                // Clear user progress
-                await Store.delete(`user:${AppState.userId}:progress`);
-                localStorage.clear();
-                location.reload();
-            }
-        };
-
-        // PUZZLE LOGIC
-        window.startPuzzle = (levelIdx) => {
-            const gridSize = 3 + Math.floor(levelIdx / 5);
-            AppState.puzzleState = {
-                timer: 0,
-                mistakes: 0,
-                isSolved: false,
-                currentLevel: levelIdx,
-                matrix: generateMatrix(gridSize),
-                timerInterval: setInterval(() => {
-                    AppState.puzzleState.timer++;
-                    const tEl = document.getElementById('timer-display');
-                    if(tEl) tEl.innerText = AppState.puzzleState.timer + 's';
-                }, 1000)
-            };
-            AppState.currentPage = 'puzzle';
-            renderApp();
-            
-            setTimeout(() => {
-                AppState.puzzleState.matrix.display = false;
-                renderApp();
-            }, 2000);
-        };
-
-        window.exitPuzzle = () => {
-            clearInterval(AppState.puzzleState.timerInterval);
-            AppState.currentPage = 'levelSelect';
-            renderApp();
-        };
-
-        function generateMatrix(size) {
-            const sequence = [];
-            const maxCells = Math.min(8, Math.floor(size * size / 2));
-            while (sequence.length < maxCells) {
-                const r = Math.floor(Math.random() * size);
-                const c = Math.floor(Math.random() * size);
-                const pos = `${r}-${c}`;
-                if (!sequence.includes(pos)) sequence.push(pos);
-            }
-            return { size, sequence, userSequence: [], display: true };
-        }
-
-        window.handleGameClick = (r, c) => {
-            const { isSolved, matrix, currentLevel } = AppState.puzzleState;
-            if (isSolved || matrix.display) return;
-            
-            const pos = `${r}-${c}`;
-            if (matrix.sequence.includes(pos)) {
-                if (!matrix.userSequence.includes(pos)) {
-                    matrix.userSequence.push(pos);
+            return `
+                <div class="flex-1 flex flex-col relative">
+                    <!-- Game HUD -->
+                    <div class="h-16 bg-gray-900 border-b border-gray-700 flex items-center justify-between px-6">
+                        <div class="font-bold text-xl text-white">${PUZZLE_NAMES[room.gameType]}</div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <span class="text-xs text-gray-500 uppercase">Mistakes</span>
+                                <div class="text-xl font-mono text-red-400">${gameData.mistakes}</div>
+                            </div>
+                            <div class="text-center">
+                                <span class="text-xs text-gray-500 uppercase">Score</span>
+                                <div class="text-xl font-mono text-gold-400">${gameData.score}</div>
+                            </div>
+                        </div>
+                    </div>
                     
-                    if (matrix.userSequence.length === matrix.sequence.length) {
-                        completePuzzle();
-                    } else {
-                        renderApp();
-                    }
-                }
-            } else {
-                AppState.puzzleState.mistakes++;
-                showMessage('Wrong tile! Resetting...', 'Oops');
-                AppState.puzzleState.matrix = generateMatrix(matrix.size);
-                AppState.puzzleState.matrix.display = true;
-                renderApp();
-                setTimeout(() => {
-                    AppState.puzzleState.matrix.display = false;
-                    renderApp();
-                }, 2000);
-            }
-        };
-
-        window.solvePuzzleSim = () => {
-            completePuzzle();
-        };
-
-        async function completePuzzle() {
-            AppState.puzzleState.isSolved = true;
-            clearInterval(AppState.puzzleState.timerInterval);
-            showConfetti();
-            
-            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
-            const stage = puzzle.stages[AppState.selectedStage];
-            const level = stage.levels[AppState.puzzleState.currentLevel];
-            
-            const time = AppState.puzzleState.timer;
-            const mistakes = AppState.puzzleState.mistakes;
-            const score = Math.max(0, 100 - (time * 0.5) - (mistakes * 10));
-            const stars = mistakes === 0 && time < 30 ? 3 : mistakes < 2 && time < 60 ? 2 : 1;
-            
-            level.status = 'completed';
-            level.score = Math.max(level.score, score);
-            level.time = level.time === 0 ? time : Math.min(level.time, time);
-            level.stars = Math.max(level.stars, stars);
-            
-            if (puzzle.levelsCompleted < (AppState.selectedStage * LEVELS_PER_STAGE + AppState.puzzleState.currentLevel + 1)) {
-                puzzle.levelsCompleted++;
-                AppState.userProgress.totalCompleted++;
-            }
-            
-            const nextLevelIdx = AppState.puzzleState.currentLevel + 1;
-            if (nextLevelIdx < LEVELS_PER_STAGE) {
-                stage.levels[nextLevelIdx].status = 'unlocked';
-            } else {
-                const nextStageIdx = AppState.selectedStage + 1;
-                if (nextStageIdx < STAGES_PER_PUZZLE) {
-                    puzzle.stages[nextStageIdx].levels[0].status = 'unlocked';
-                } else {
-                    const nextPuzzleIdx = AppState.selectedPuzzle + 1;
-                    if (nextPuzzleIdx < TOTAL_PUZZLES) {
-                        AppState.userProgress.puzzles[nextPuzzleIdx].stages[0].levels[0].status = 'unlocked';
-                    }
-                }
-            }
-            
-            await saveProgress();
-            showMessage(`Solved in ${time}s with ${mistakes} mistakes! Score: ${Math.round(score)}`, 'Victory!');
-            renderApp();
+                    <!-- Game Area -->
+                    <div class="flex-1 flex items-center justify-center p-4 bg-gray-900 relative overflow-hidden">
+                         ${renderGameBoard(room.gameType)}
+                    </div>
+                    
+                    ${room.gameType === 2 ? '' : `
+                    <div class="h-1 bg-gray-800">
+                        <div class="h-full bg-teal-500 transition-all duration-1000" style="width: ${gameData.status === 'memorize' ? '100%' : '0%'}"></div>
+                    </div>`}
+                </div>
+            `;
         }
 
-        // MULTIPLAYER
+        function renderGameBoard(type) {
+            const gd = window.AppState.gameState;
+            
+            // --- MEMORY MATRIX ---
+            if (type == 0) {
+                const size = gd.matrix ? Math.sqrt(gd.matrix.length) : 3; // Derive size or store it
+                // Actually we stored gd.matrix as simple bool? No, sequence logic.
+                // Re-deriving grid size from logic.
+                const gridSize = gd.gridSize || 4;
+                
+                let cells = '';
+                for(let r=0; r<gridSize; r++) {
+                    for(let c=0; c<gridSize; c++) {
+                        const pos = `${r}-${c}`;
+                        const isTarget = gd.sequence.includes(pos);
+                        const isSelected = gd.userSequence.includes(pos);
+                        
+                        let cellClass = "bg-gray-800 border-gray-700 hover:bg-gray-700 cursor-pointer";
+                        let content = "";
+
+                        if (gd.status === 'memorize') {
+                            if (isTarget) cellClass = "bg-teal-500 border-teal-400 shadow-glow transform scale-105";
+                        } else {
+                            if (isSelected) {
+                                cellClass = "bg-green-500 border-green-400";
+                                content = '<i class="fa-solid fa-check text-white"></i>';
+                            }
+                        }
+
+                        cells += `<div onclick="window.handleGameInput('${pos}')" class="grid-cell rounded-lg border-2 flex items-center justify-center text-xl transition-all duration-200 ${cellClass}">${content}</div>`;
+                    }
+                }
+                
+                return `
+                    <div class="grid gap-3 animate-pop" style="grid-template-columns: repeat(${gridSize}, minmax(3rem, 5rem));">
+                        ${cells}
+                    </div>
+                    ${gd.status === 'memorize' ? '<div class="absolute bottom-8 text-teal-400 font-bold animate-pulse text-xl tracking-widest">MEMORIZE PATTERN</div>' : ''}
+                `;
+            }
+
+            // --- LIGHT SWITCH ---
+            if (type == 1) {
+                const gridSize = 5;
+                let cells = '';
+                if(gd.board) {
+                    for(let r=0; r<gridSize; r++) {
+                        for(let c=0; c<gridSize; c++) {
+                            const isOn = gd.board[r][c];
+                            const cellClass = isOn ? "bg-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.6)] border-yellow-200" : "bg-gray-800 border-gray-700 hover:bg-gray-700";
+                            cells += `<div onclick="window.handleGameInput('${r}-${c}')" class="grid-cell rounded-md border-2 cursor-pointer transition-all duration-300 ${cellClass}"></div>`;
+                        }
+                    }
+                }
+                return `
+                    <div class="grid gap-2 animate-pop" style="grid-template-columns: repeat(${gridSize}, minmax(2.5rem, 4rem));">
+                        ${cells}
+                    </div>
+                    <div class="absolute bottom-8 text-gray-400 text-sm">Turn all lights OFF</div>
+                `;
+            }
+
+            // --- SIMON ---
+            if (type == 2) {
+                const colors = ['bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500'];
+                const glowColors = ['shadow-[0_0_30px_red]', 'shadow-[0_0_30px_blue]', 'shadow-[0_0_30px_green]', 'shadow-[0_0_30px_yellow]'];
+                
+                let btns = '';
+                for(let i=0; i<4; i++) {
+                    const isActive = gd.activeLight === i;
+                    const baseClass = colors[i];
+                    const activeClass = isActive ? `brightness-150 scale-105 ${glowColors[i]} z-10` : 'opacity-70 hover:opacity-100';
+                    
+                    btns += `<div onclick="window.handleGameInput(${i})" class="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl cursor-pointer transition-all duration-100 border-4 border-black/20 ${baseClass} ${activeClass}"></div>`;
+                }
+
+                return `
+                    <div class="grid grid-cols-2 gap-4 animate-pop p-4 bg-gray-800/50 rounded-full border-4 border-gray-700">
+                        ${btns}
+                    </div>
+                    <div class="absolute bottom-4 font-mono text-xl text-white">${gd.status === 'watch' ? 'WATCH' : 'REPEAT'}</div>
+                `;
+            }
+
+            return `<div>Unknown Game</div>`;
+        }
+
+        // --- CORE APP RENDER ---
+        window.renderApp = () => {
+            const app = document.getElementById('app');
+            app.innerHTML = renderHeader();
+
+            const main = document.createElement('main');
+            main.className = 'flex-grow flex flex-col';
+
+            if (window.AppState.currentPage === 'home') {
+                main.innerHTML = renderHome();
+            } else if (window.AppState.currentPage === 'lobby') {
+                main.innerHTML = renderLobby();
+            }
+
+            app.appendChild(main);
+
+            // Auto-scroll chat
+            const cb = document.getElementById('chat-box');
+            if (cb) cb.scrollTop = cb.scrollHeight;
+        };
+
+        // --- INTERACTION HANDLERS ---
+
         window.createRoom = async (mode) => {
-            const room = await MultiplayerService.createRoom(mode);
-            AppState.currentRoom = room;
-            lastPlayerCount = room.players.length;
-            AppState.activeRooms = await MultiplayerService.getActiveRooms();
-            showMessage(`Room created! Code: ${room.roomCode}`, '🎮 Room Ready');
-            renderApp();
+            try {
+                const code = await Service.createRoom(mode);
+                await window.joinRoom(code);
+            } catch (e) { alert("Failed to create room: " + e.message); }
+        };
+
+        window.joinRoomInput = () => {
+            const code = document.getElementById('room-code-input').value.toUpperCase();
+            if(code.length === 4) window.joinRoom(code);
         };
 
         window.joinRoom = async (code) => {
-            const res = await MultiplayerService.joinRoom(code);
-            if (typeof res === 'string') {
-                showMessage(res.replace(/_/g, ' '), '❌ Error');
-            } else {
-                AppState.currentRoom = res;
-                lastPlayerCount = res.players.length;
-                showMessage(`Joined room ${code}!`, '✅ Connected');
-                renderApp();
+            try {
+                // Subscribe first to get updates instantly
+                if(window.AppState.roomListener) window.AppState.roomListener(); // unsubscribe prev
+                
+                window.AppState.roomListener = Service.subscribeToRoom(code, (roomData) => {
+                    if (!roomData) {
+                        alert("Room closed or doesn't exist.");
+                        window.navTo('home');
+                        return;
+                    }
+
+                    // Sync logic
+                    const prevStatus = window.AppState.activeRoom?.status;
+                    const prevGameId = window.AppState.activeRoom?.gameSeed;
+
+                    window.AppState.activeRoom = roomData;
+                    
+                    // Detect Game Start
+                    if (roomData.status === 'playing' && (prevStatus !== 'playing' || prevGameId !== roomData.gameSeed)) {
+                        initGameLocally(roomData.gameType, roomData.gameSeed);
+                    }
+
+                    if (window.AppState.currentPage !== 'lobby') window.navTo('lobby');
+                    else renderApp();
+                });
+
+                // Add player to list
+                await Service.joinRoom(code);
+
+            } catch (e) {
+                alert("Could not join room: " + e.message);
             }
         };
 
-        window.joinRoomByInput = async () => {
-            const val = document.getElementById('room-code-input').value.toUpperCase();
-            if(val.length === 4) await window.joinRoom(val);
+        window.leaveRoom = () => {
+            if(window.AppState.roomListener) window.AppState.roomListener();
+            window.AppState.activeRoom = null;
+            window.AppState.roomListener = null;
+            window.navTo('home');
         };
 
-        window.leaveRoom = async () => {
-            AppState.currentRoom = null;
-            lastPlayerCount = 0;
-            AppState.activeRooms = await MultiplayerService.getActiveRooms();
+        window.copyCode = (code) => {
+            navigator.clipboard.writeText(code);
+            // Visual feedback could go here
+        };
+
+        window.submitChat = (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if(msg && window.AppState.activeRoom) {
+                Service.sendChat(window.AppState.activeRoom.roomCode, msg);
+                input.value = '';
+            }
+        };
+
+        window.selectLobbyGame = (id) => {
+            window.AppState.selectedGameId = id;
             renderApp();
         };
 
-        window.copyRoomCode = (code) => {
-            navigator.clipboard.writeText(code).then(() => {
-                showMessage('Room code copied to clipboard!', '📋 Copied');
-            }).catch(() => {
-                showMessage(`Room code: ${code}`, 'Copy Failed');
-            });
+        window.startGameForRoom = async () => {
+            if (!window.AppState.activeRoom) return;
+            const seed = Math.floor(Math.random() * 100000);
+            await Service.setGameStatus(
+                window.AppState.activeRoom.roomCode, 
+                window.AppState.selectedGameId, 
+                'playing', 
+                seed
+            );
         };
 
-        window.sendChat = async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('chat-input');
-            const msg = input.value;
-            if(msg.trim()) {
-                await MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
-                AppState.currentRoom = await MultiplayerService.getRoom(AppState.currentRoom.roomCode);
-                input.value = '';
+        window.startSoloGame = (id) => {
+            // Create a fake room-like structure for solo play reuse
+            window.AppState.activeRoom = {
+                roomCode: 'SOLO',
+                hostId: window.AppState.userId,
+                players: [{ id: window.AppState.userId, name: 'You', score: 0 }],
+                chat: [],
+                status: 'playing',
+                gameType: id,
+                gameSeed: Date.now()
+            };
+            initGameLocally(id, Date.now());
+            window.navTo('lobby');
+        };
+
+        // --- GAMEPLAY LOGIC ---
+
+        function initGameLocally(type, seed) {
+            let logic;
+            if (type == 0) logic = initSequentialMemory(1, seed);
+            else if (type == 1) logic = initLightSwitch(1, seed);
+            else if (type == 2) logic = initSimon(1, seed);
+            
+            window.AppState.gameState = {
+                ...logic,
+                score: 0,
+                mistakes: 0,
+                level: 1,
+                activeLight: -1 // For Simon animation
+            };
+
+            // Start Logic
+            if (type == 0) runMemorySequence();
+            if (type == 2) runSimonSequence();
+        }
+
+        function runMemorySequence() {
+            window.AppState.gameState.status = 'memorize';
+            renderApp();
+            setTimeout(() => {
+                window.AppState.gameState.status = 'input';
                 renderApp();
+            }, 2000 + (window.AppState.gameState.level * 200));
+        }
+
+        async function runSimonSequence() {
+            window.AppState.gameState.status = 'watch';
+            window.AppState.gameState.userStep = 0; // Reset user progress
+            renderApp();
+            
+            await new Promise(r => setTimeout(r, 800));
+
+            for (let i = 0; i < window.AppState.gameState.sequence.length; i++) {
+                window.AppState.gameState.activeLight = window.AppState.gameState.sequence[i];
+                renderApp();
+                await new Promise(r => setTimeout(r, 600)); // Light ON time
+                window.AppState.gameState.activeLight = -1;
+                renderApp();
+                await new Promise(r => setTimeout(r, 200)); // Gap
+            }
+            
+            window.AppState.gameState.status = 'input';
+            renderApp();
+        }
+
+        window.handleGameInput = (val) => {
+            const gs = window.AppState.gameState;
+            if (gs.status !== 'input' && gs.status !== 'playing') return;
+
+            // Memory
+            if (gs.type === 'memory') {
+                if (gs.sequence.includes(val)) {
+                    if (!gs.userSequence.includes(val)) {
+                        gs.userSequence.push(val);
+                        gs.score += 10;
+                        if (gs.userSequence.length === gs.sequence.length) {
+                            // Level Complete
+                            handleLevelComplete();
+                        } else {
+                            renderApp();
+                        }
+                    }
+                } else {
+                    gs.mistakes++;
+                    gs.score = Math.max(0, gs.score - 5);
+                    renderApp();
+                    // Feedback shake?
+                }
+            }
+
+            // Light Switch
+            else if (gs.type === 'lights') {
+                const [r, c] = val.split('-').map(Number);
+                toggleLights(gs.board, r, c, gs.gridSize);
+                gs.score += 1; // points for moves? Usually fewer is better, but simpler here.
+                
+                // Check win
+                const isClear = gs.board.every(row => row.every(cell => !cell));
+                if (isClear) handleLevelComplete();
+                else renderApp();
+            }
+
+            // Simon
+            else if (gs.type === 'simon') {
+                const expected = gs.sequence[gs.userStep];
+                
+                // Flash clicked button briefly
+                gs.activeLight = val;
+                renderApp();
+                setTimeout(() => { gs.activeLight = -1; renderApp(); }, 200);
+
+                if (val === expected) {
+                    gs.userStep++;
+                    if (gs.userStep >= gs.sequence.length) {
+                        gs.score += 50;
+                        handleLevelComplete();
+                    }
+                } else {
+                    gs.mistakes++;
+                    gs.score = Math.max(0, gs.score - 10);
+                    // Reset or Game Over?
+                    // Simple restart of sequence
+                    runSimonSequence();
+                }
+            }
+            
+            // Sync Score
+            if (window.AppState.activeRoom && window.AppState.activeRoom.roomCode !== 'SOLO') {
+                Service.updateScore(window.AppState.activeRoom.roomCode, gs.score);
             }
         };
 
-        // START
-        initApp();
+        function handleLevelComplete() {
+            // Fireworks or visual flair
+            confettiEffect();
+            
+            // Increment Level
+            const gs = window.AppState.gameState;
+            gs.level++;
+            
+            // Generate next level logic
+            const seed = Date.now(); // or deterministic
+            if (gs.type === 'memory') {
+                const next = initSequentialMemory(gs.level, seed);
+                gs.sequence = next.sequence;
+                gs.gridSize = next.gridSize;
+                gs.userSequence = [];
+                runMemorySequence();
+            } else if (gs.type === 'lights') {
+                const next = initLightSwitch(gs.level, seed);
+                gs.board = next.board;
+                renderApp();
+            } else if (gs.type === 'simon') {
+                const next = initSimon(gs.level, seed);
+                gs.sequence = next.sequence;
+                runSimonSequence();
+            }
+        }
+
+        // --- VISUAL EFFECTS ---
+        function confettiEffect() {
+            const canvas = document.getElementById('confetti-canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            const particles = [];
+            for(let i=0; i<100; i++) {
+                particles.push({
+                    x: window.innerWidth/2,
+                    y: window.innerHeight/2,
+                    vx: (Math.random() - 0.5) * 20,
+                    vy: (Math.random() - 0.5) * 20,
+                    life: 1.0,
+                    color: `hsl(${Math.random()*360}, 100%, 50%)`
+                });
+            }
+            
+            function animate() {
+                ctx.clearRect(0,0,canvas.width,canvas.height);
+                let alive = false;
+                particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.5; // gravity
+                    p.life -= 0.02;
+                    if(p.life > 0) {
+                        alive = true;
+                        ctx.globalAlpha = p.life;
+                        ctx.fillStyle = p.color;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 5, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                });
+                if(alive) requestAnimationFrame(animate);
+                else ctx.clearRect(0,0,canvas.width,canvas.height);
+            }
+            animate();
+        }
+
     </script>
 </body>
 </html>
