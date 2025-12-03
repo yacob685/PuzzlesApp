@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Nexus</title>
+    <title>Puzzle Nexus - Multiplayer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -89,6 +89,7 @@
             userProgress: null,
             activeRooms: [],
             currentRoom: null,
+            isRoomHost: false,
             
             puzzleState: {
                 timer: 0,
@@ -97,9 +98,30 @@
                 currentLevel: 0,
                 matrix: { size: 3, sequence: [], userSequence: [], display: true },
                 timerInterval: null
+            },
+            
+            // Multiplayer specific local state
+            multiplayerState: {
+                status: 'waiting', // waiting, playing, spectator
+                seed: 0
             }
         };
 
+        // PSEUDO RANDOM GENERATOR (Seeded)
+        // Ensures all players get the exact same puzzle configuration
+        function sfc32(a, b, c, d) {
+            return function() {
+                a |= 0; b |= 0; c |= 0; d |= 0; 
+                var t = (a + b | 0) + d | 0;
+                d = d + 1 | 0;
+                a = b ^ b >>> 9;
+                b = c + (c << 3) | 0;
+                c = (c << 21 | c >>> 11);
+                c = c + t | 0;
+                return (t >>> 0) / 4294967296;
+            }
+        }
+        
         // UTILITY FUNCTIONS
         const generateRoomCode = () => {
             const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -175,7 +197,6 @@
                                     }))
                                 }))
                             };
-                            // Unlock first level of first stage of first puzzle
                             if (index === 0) {
                                 acc[index].stages[0].levels[0].status = 'unlocked';
                             }
@@ -209,12 +230,15 @@
                     roomCode,
                     mode,
                     createdAt: Date.now(),
-                    status: 'waiting',
+                    status: 'lobby', // 'lobby' or 'playing'
+                    activePuzzleIdx: 0, // Default to first puzzle
+                    gameSeed: Math.random(), // For synced RNG
                     players: [{ 
                         id: AppState.userId, 
                         name: `Player-${AppState.userId.substring(0, 4)}`, 
                         status: 'ready', 
-                        score: 0 
+                        score: 0,
+                        isSpectator: false
                     }],
                     hostId: AppState.userId,
                     chat: []
@@ -233,44 +257,61 @@
                         if (!roomDoc.exists()) throw "ROOM_NOT_FOUND";
                         
                         const room = roomDoc.data();
-                        if (room.status !== 'waiting' && !room.players.some(p => p.id === AppState.userId)) {
-                            throw "GAME_IN_PROGRESS";
-                        }
-
-                        // Add player if not present
+                        
+                        // Check if player is already in
                         if (!room.players.some(p => p.id === AppState.userId)) {
-                            if (room.players.length >= 4) throw "ROOM_FULL";
+                            if (room.players.length >= 8) throw "ROOM_FULL"; // Increased cap for observers
+                            
+                            const isGameInProgress = room.status === 'playing';
                             
                             const newPlayer = {
                                 id: AppState.userId,
                                 name: `Player-${AppState.userId.substring(0, 4)}`,
-                                status: 'ready',
-                                score: 0
+                                status: isGameInProgress ? 'waiting' : 'ready',
+                                score: 0,
+                                isSpectator: isGameInProgress // Mark as spectator if joining mid-game
                             };
                             
-                            // Update players array
                             const newPlayers = [...room.players, newPlayer];
                             transaction.update(roomRef, { players: newPlayers });
                             
-                            // Send system message
                             const chatMsg = {
                                 senderId: 'SYSTEM',
                                 senderName: 'System',
-                                text: `${newPlayer.name} joined!`,
+                                text: `${newPlayer.name} joined${isGameInProgress ? ' (Waiting for next round)' : ''}!`,
                                 timestamp: Date.now()
                             };
-                            transaction.update(roomRef, { 
-                                chat: arrayUnion(chatMsg) 
-                            });
+                            transaction.update(roomRef, { chat: arrayUnion(chatMsg) });
                         }
                     });
                     
-                    return await this.getRoom(code); // Return fresh data
+                    return await this.getRoom(code);
                 } catch (error) {
                     return typeof error === 'string' ? error : "JOIN_FAILED";
                 }
             },
             
+            async updateRoomSettings(code, settings) {
+                // Settings can include: activePuzzleIdx, status, gameSeed
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
+                await updateDoc(roomRef, settings);
+            },
+            
+            async updatePlayerScore(code, score) {
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
+                // Need to read-modify-write players array safely
+                // For simplicity in this demo, we'll read then update, better to use transaction in prod
+                const r = await this.getRoom(code);
+                if(!r) return;
+                
+                const players = r.players.map(p => {
+                    if(p.id === AppState.userId) return { ...p, score: score };
+                    return p;
+                });
+                
+                await updateDoc(roomRef, { players });
+            },
+
             async sendMessage(code, message) {
                 const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
                 const chatMsg = {
@@ -279,16 +320,13 @@
                     text: message,
                     timestamp: Date.now()
                 };
-                await updateDoc(roomRef, {
-                    chat: arrayUnion(chatMsg)
-                });
+                await updateDoc(roomRef, { chat: arrayUnion(chatMsg) });
             },
             
             async getActiveRooms() {
                 const roomsRef = collection(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms');
-                // Simple query to get recent/waiting rooms
-                // Note: Firestore requires index for complex sorting, sticking to simple get
-                const q = query(roomsRef, where("status", "==", "waiting")); 
+                // Only show rooms currently in lobby
+                const q = query(roomsRef, where("status", "==", "lobby")); 
                 const querySnapshot = await getDocs(q);
                 
                 const rooms = [];
@@ -308,19 +346,16 @@
         // INIT APP
         async function initApp() {
             try {
-                               // Enable debug logging for Firestore/Auth
-
-                // 1. Load Configs
-                // Place your firebaseConfig object here directly:
-                const firebaseConfig = {
-                  apiKey: "AIzaSyB-3kAk-lMT3jTny2YIs2R1_0mG-tJlmJI",
-                  authDomain: "puzzlesapp.firebaseapp.com",
-                  projectId: "puzzlesapp",
-                  storageBucket: "puzzlesapp.firebasestorage.app",
-                  messagingSenderId: "303461259730",
-                  appId: "1:303461259730:web:a1790a976b6d58d71dd00b",
-                  measurementId: "G-8YEJEBX0NE"
-                };
+              // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyB-3kAk-lMT3jTny2YIs2R1_0mG-tJlmJI",
+  authDomain: "puzzlesapp.firebaseapp.com",
+  projectId: "puzzlesapp",
+  storageBucket: "puzzlesapp.firebasestorage.app",
+  messagingSenderId: "303461259730",
+  appId: "1:303461259730:web:a1790a976b6d58d71dd00b",
+  measurementId: "G-8YEJEBX0NE"
+};
 
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'puzzle-nexus-default';
                 AppState.appId = appId;
@@ -340,14 +375,8 @@
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         AppState.userId = user.uid;
-                        
-                        // Initialize progress from Firestore
                         await initializeProgress();
-                        
-                        // Load rooms
                         AppState.activeRooms = await MultiplayerService.getActiveRooms();
-                        
-                        // Ready to render
                         AppState.currentPage = 'home';
                         renderApp();
                     }
@@ -359,7 +388,7 @@
             }
         }
 
-        // Real-time listener management
+        // ROOM STATE MANAGER
         function setupRoomListener(roomCode) {
             if (unsubscribeRoomListener) unsubscribeRoomListener();
             
@@ -368,24 +397,87 @@
             unsubscribeRoomListener = onSnapshot(roomRef, (doc) => {
                 if (doc.exists()) {
                     const roomData = doc.data();
+                    const prevStatus = AppState.currentRoom ? AppState.currentRoom.status : null;
+                    AppState.currentRoom = roomData;
+                    AppState.isRoomHost = roomData.hostId === AppState.userId;
+
+                    // Handle Game Start Transition
+                    if (prevStatus === 'lobby' && roomData.status === 'playing') {
+                        // Check if I am a player in this game
+                        const myPlayer = roomData.players.find(p => p.id === AppState.userId);
+                        if (myPlayer && !myPlayer.isSpectator) {
+                            startMultiplayerGameInstance(roomData);
+                        } else {
+                            // I joined late or am a spectator
+                            AppState.multiplayerState.status = 'spectator';
+                            renderApp(); // Will show waiting screen
+                        }
+                    }
                     
-                    // Check for new messages/players to notify user?
-                    if (AppState.currentRoom) {
-                         // Simple diff check could go here
+                    // Handle Game End/Return to Lobby
+                    if (prevStatus === 'playing' && roomData.status === 'lobby') {
+                        AppState.currentPage = 'lobby';
+                        AppState.multiplayerState.status = 'waiting';
+                        renderApp();
                     }
 
-                    AppState.currentRoom = roomData;
-                    if (AppState.currentPage === 'lobby') {
+                    // Refresh UI if we are in lobby or multiplayer game
+                    if (AppState.currentPage === 'lobby' || AppState.currentPage === 'multiplayerGame') {
                         renderApp();
                     }
                 } else {
-                    // Room deleted
                     showMessage("Room closed by host or expired.", "Disconnected");
-                    window.leaveRoom(false); // don't update db, just leave local
+                    window.leaveRoom(false);
                 }
-            }, (error) => {
-                console.error("Room Listen Error:", error);
             });
+        }
+
+        function startMultiplayerGameInstance(roomData) {
+            AppState.currentPage = 'multiplayerGame';
+            AppState.multiplayerState.status = 'playing';
+            
+            // USE SEED FOR IDENTICAL BOARD
+            // Seeding logic: Create a seeded RNG based on roomData.gameSeed
+            const seedFunc = sfc32(roomData.gameSeed * 1000, roomData.gameSeed * 2000, roomData.gameSeed * 3000, roomData.gameSeed * 4000);
+
+            // Initialize puzzle state for multiplayer
+            const puzzleName = PUZZLE_NAMES[roomData.activePuzzleIdx];
+            
+            if (puzzleName === 'Sequential Memory Matrix') {
+                AppState.puzzleState = {
+                    timer: 0,
+                    mistakes: 0,
+                    isSolved: false,
+                    currentLevel: 0,
+                    matrix: generateMatrix(4, seedFunc), // Fixed difficulty for MP
+                    timerInterval: setInterval(() => {
+                        AppState.puzzleState.timer++;
+                        const tEl = document.getElementById('timer-display');
+                        if(tEl) tEl.innerText = AppState.puzzleState.timer + 's';
+                    }, 1000)
+                };
+                
+                // Show memorize phase
+                renderApp();
+                setTimeout(() => {
+                    AppState.puzzleState.matrix.display = false;
+                    renderApp();
+                }, 3000); // 3 seconds to memorize in MP
+            } else {
+                // Placeholder setup for other games
+                AppState.puzzleState = {
+                    timer: 0,
+                    mistakes: 0,
+                    isSolved: false,
+                    timerInterval: setInterval(() => {
+                        AppState.puzzleState.timer++;
+                        const tEl = document.getElementById('timer-display');
+                        if(tEl) tEl.innerText = AppState.puzzleState.timer + 's';
+                    }, 1000)
+                };
+            }
+            
+            renderApp();
         }
 
         // RENDER FUNCTIONS
@@ -412,9 +504,9 @@
                                 `).join('')}
                             </nav>
                         </div>
-                        <button onclick="window.resetProgress()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-300 shadow-md">
-                            Reset Data
-                        </button>
+                        <div class="text-xs text-gray-400 hidden sm:block">
+                           User: ${AppState.userId ? AppState.userId.substring(0,6) : '...'}
+                        </div>
                     </div>
                 </header>
             `;
@@ -442,7 +534,6 @@
                                 ${progress}%
                             </div>
                         </div>
-                        <p class="text-sm text-gray-400 mb-4">Stage ${puzzle.currentStage + 1}, Level ${puzzle.currentLevel + 1}</p>
                         <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
                             <div class="h-full ${isNext ? 'bg-teal-500' : 'bg-yellow-500'}" style="width: ${progress}%"></div>
                         </div>
@@ -452,23 +543,19 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-                    <h1 class="text-5xl font-extrabold text-white mb-4">Welcome Back!</h1>
-                    <p class="text-lg text-gray-400 mb-10">User ID: <span class="text-sm text-gold-400 bg-gray-700 p-1 rounded-md font-mono">${AppState.userId.substring(0,8)}...</span></p>
-
                     <section class="mb-12 p-6 bg-gray-800 rounded-xl shadow-lg border border-teal-600/50">
                         <h2 class="text-3xl font-bold text-yellow-400 mb-4">Quick Actions</h2>
                         <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
                             <button onclick="window.goToStageSelect(${nextPuzzleIndex})" class="flex-1 py-3 px-6 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg shadow-lg">
-                                Continue Adventure
+                                <i class="fa-solid fa-play mr-2"></i> Continue Solo
                             </button>
                             <button onclick="window.navTo('lobby')" class="flex-1 py-3 px-6 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg shadow-lg">
-                                Multiplayer Lobby
+                                <i class="fa-solid fa-users mr-2"></i> Multiplayer Lobby
                             </button>
                         </div>
                     </section>
-
                     <section>
-                        <h2 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-2">All Puzzles</h2>
+                        <h2 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-2">Solo Puzzles</h2>
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             ${puzzles}
                         </div>
@@ -494,7 +581,6 @@
                             <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
                                 <div class="h-full bg-teal-500" style="width: ${progress}%"></div>
                             </div>
-                            <p class="text-xs text-gray-500 mt-1">${completedCount}/${LEVELS_PER_STAGE} Done</p>
                         </div>
                     </div>
                 `;
@@ -505,8 +591,7 @@
                     <button onclick="window.navTo('home')" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
                         <i class="fa-solid fa-arrow-left mr-2"></i> Back to Puzzles
                     </button>
-                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name}</h1>
-                    <p class="text-lg text-gray-400 mb-8">Select a Stage</p>
+                    <h1 class="text-4xl font-extrabold text-white mb-8">${puzzle.name}</h1>
                     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6">
                         ${stagesHtml}
                     </div>
@@ -522,21 +607,13 @@
                 const isUnlocked = level.status === 'unlocked' || level.status === 'completed';
                 const isCompleted = level.status === 'completed';
                 const isLocked = !isUnlocked;
-                
                 let bgClass = isLocked ? 'bg-gray-900/50 cursor-not-allowed' : isCompleted ? 'bg-green-800/50 hover:bg-green-700/70 cursor-pointer' : 'bg-gray-800 hover:bg-gray-700 cursor-pointer';
                 
-                const starCount = level.stars || 0;
-                const starsHtml = Array(3).fill(0).map((_, i) => 
-                    `<span class="text-lg ${i < starCount ? 'text-yellow-400' : 'text-gray-600'}">★</span>`
-                ).join('');
-
                 return `
                     <div onclick="${isUnlocked ? `window.startPuzzle(${index})` : ''}" 
                         class="p-3 rounded-xl shadow-lg transition transform duration-300 text-center ${bgClass}">
-                        <div class="text-xl font-bold mb-1 ${isLocked ? 'text-gray-600' : 'text-white'}">Lvl ${index + 1}</div>
-                        ${isCompleted ? `<div class="flex justify-center">${starsHtml}</div>` : 
-                          isLocked ? '<span class="text-red-500 text-3xl">🔒</span>' : 
-                          '<span class="text-teal-400 text-xl font-bold">PLAY</span>'}
+                        <div class="text-xl font-bold mb-1 ${isLocked ? 'text-gray-600' : 'text-white'}">${index + 1}</div>
+                         ${isLocked ? '<span class="text-red-500">🔒</span>' : isCompleted ? '⭐' : '▶️'}
                     </div>
                 `;
             }).join('');
@@ -547,7 +624,7 @@
                         <i class="fa-solid fa-arrow-left mr-2"></i> Back to Stages
                     </button>
                     <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name} - Stage ${AppState.selectedStage + 1}</h1>
-                    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4 mt-8">
+                    <div class="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-10 gap-4 mt-8">
                         ${levelsHtml}
                     </div>
                 </div>
@@ -555,6 +632,7 @@
         }
 
         function renderPuzzle() {
+            // SOLO PLAY RENDER
             const puzzleName = PUZZLE_NAMES[AppState.selectedPuzzle];
             const { timer, mistakes, isSolved, matrix } = AppState.puzzleState;
             
@@ -562,7 +640,6 @@
             if (puzzleName === 'Sequential Memory Matrix') {
                 const { size, sequence, userSequence, display } = matrix;
                 const cells = [];
-                
                 for(let r=0; r<size; r++) {
                     for(let c=0; c<size; c++) {
                         const pos = `${r}-${c}`;
@@ -570,7 +647,6 @@
                         const isClicked = userSequence.includes(pos);
                         
                         let cellClass = 'w-12 h-12 sm:w-16 sm:h-16 rounded-lg border-2 flex items-center justify-center font-bold text-xl ';
-                        
                         if (display) {
                             cellClass += isInSequence ? 'bg-teal-500 border-teal-400' : 'bg-gray-800 border-gray-700';
                         } else if (isSolved) {
@@ -578,50 +654,125 @@
                         } else {
                             cellClass += isClicked ? 'bg-yellow-500 border-yellow-400' : 'bg-gray-800 border-gray-700 hover:bg-gray-600 cursor-pointer';
                         }
-                        
                         cells.push(`<div onclick="window.handleGameClick(${r}, ${c})" class="${cellClass}">${isClicked ? '✓' : ''}</div>`);
                     }
                 }
-                
-                gridHtml = `
-                    <div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">
-                        ${cells.join('')}
-                    </div>
-                `;
+                gridHtml = `<div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">${cells.join('')}</div>`;
             } else {
-                gridHtml = `
-                    <div class="text-center p-10 bg-gray-800 rounded-xl">
-                        <p class="mb-4">Simulation placeholder for <b>${puzzleName}</b>.</p>
-                        <button onclick="window.solvePuzzleSim()" class="bg-green-600 text-white px-4 py-2 rounded">Simulate Win</button>
-                    </div>
-                `;
+                gridHtml = `<div class="text-center p-10 bg-gray-800 rounded-xl"><p>Placeholder for <b>${puzzleName}</b>.</p><button onclick="window.solvePuzzleSim()" class="bg-green-600 text-white px-4 py-2 mt-4 rounded">Win Simulation</button></div>`;
             }
 
             return `
                 <div class="max-w-4xl mx-auto px-4 py-10 w-full text-center">
                     <button onclick="window.exitPuzzle()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
-                        <i class="fa-solid fa-arrow-left mr-2"></i> Exit Level
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Exit
                     </button>
-                    <h1 class="text-4xl font-extrabold text-white mb-6">${puzzleName}</h1>
-                    
+                    <h1 class="text-3xl font-extrabold text-white mb-6">${puzzleName}</h1>
                     <div class="flex justify-between items-center mb-8 p-4 bg-gray-800 rounded-xl shadow-inner max-w-lg mx-auto">
-                        <div class="text-center w-1/3">
-                            <p class="text-xs text-gray-400 uppercase">Time</p>
-                            <p id="timer-display" class="text-3xl font-bold text-white">${timer}s</p>
+                        <div class="text-center w-1/3"><p class="text-xs text-gray-400">Time</p><p id="timer-display" class="text-2xl font-bold">${timer}s</p></div>
+                        <div class="text-center w-1/3"><p class="text-xs text-gray-400">Mistakes</p><p class="text-2xl font-bold text-red-400">${mistakes}</p></div>
+                    </div>
+                    ${gridHtml}
+                </div>
+            `;
+        }
+
+        function renderMultiplayerGame() {
+            // MULTIPLAYER GAME RENDER
+            const room = AppState.currentRoom;
+            
+            // 1. LATE JOINER / SPECTATOR VIEW
+            if (AppState.multiplayerState.status === 'spectator') {
+                return `
+                    <div class="max-w-4xl mx-auto px-4 py-20 w-full text-center">
+                        <h1 class="text-4xl font-bold text-white mb-4">Game in Progress</h1>
+                        <p class="text-xl text-gray-400 mb-8">Please wait for the next round...</p>
+                        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-teal-500 mx-auto mb-8"></div>
+                        <div class="bg-gray-800 p-6 rounded-xl max-w-md mx-auto">
+                             <h3 class="text-lg font-bold text-teal-400 mb-4">Current Leaderboard</h3>
+                             ${room.players.map(p => `
+                                <div class="flex justify-between py-2 border-b border-gray-700 last:border-0">
+                                    <span>${p.name}</span>
+                                    <span class="font-bold text-gold-400">${p.score}</span>
+                                </div>
+                             `).join('')}
                         </div>
-                        <div class="text-center w-1/3 border-l border-r border-gray-700">
-                            <p class="text-xs text-gray-400 uppercase">Mistakes</p>
-                            <p class="text-3xl font-bold text-red-400">${mistakes}</p>
+                        ${AppState.isRoomHost ? `<button onclick="window.returnToLobby()" class="mt-8 bg-red-600 hover:bg-red-700 px-6 py-2 rounded text-white font-bold">End Game & Return to Lobby</button>` : ''}
+                    </div>
+                `;
+            }
+
+            // 2. ACTIVE PLAYER VIEW
+            const puzzleName = PUZZLE_NAMES[room.activePuzzleIdx];
+            const { timer, mistakes, isSolved, matrix } = AppState.puzzleState;
+            
+            // --- Shared Game Logic (Sequential Memory) ---
+            let gameBoardHtml = '';
+            if (puzzleName === 'Sequential Memory Matrix') {
+                const { size, sequence, userSequence, display } = matrix;
+                const cells = [];
+                for(let r=0; r<size; r++) {
+                    for(let c=0; c<size; c++) {
+                        const pos = `${r}-${c}`;
+                        const isInSequence = sequence.includes(pos);
+                        const isClicked = userSequence.includes(pos);
+                        
+                        let cellClass = 'w-12 h-12 sm:w-16 sm:h-16 rounded-lg border-2 flex items-center justify-center font-bold text-xl ';
+                        if (display) {
+                            cellClass += isInSequence ? 'bg-teal-500 border-teal-400' : 'bg-gray-800 border-gray-700';
+                        } else if (isSolved) {
+                            cellClass += isInSequence ? 'bg-green-500 border-green-400' : 'bg-gray-800 border-gray-700';
+                        } else {
+                            cellClass += isClicked ? 'bg-yellow-500 border-yellow-400' : 'bg-gray-800 border-gray-700 hover:bg-gray-600 cursor-pointer';
+                        }
+                        cells.push(`<div onclick="window.handleMultiplayerClick(${r}, ${c})" class="${cellClass}">${isClicked ? '✓' : ''}</div>`);
+                    }
+                }
+                gameBoardHtml = `<div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">${cells.join('')}</div>`;
+            } else {
+                gameBoardHtml = `
+                    <div class="text-center p-10 bg-gray-800 rounded-xl">
+                        <p class="mb-4">Multiplayer support for <b>${puzzleName}</b> coming soon.</p>
+                        <p class="text-sm text-gray-400">Click below to simulate score update.</p>
+                        <button onclick="window.simulateMultiplayerScore()" class="bg-green-600 text-white px-4 py-2 mt-4 rounded">Claim Victory (Sim)</button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="max-w-6xl mx-auto px-4 py-6 w-full flex flex-col md:flex-row gap-6">
+                    <!-- GAME AREA -->
+                    <div class="flex-grow text-center">
+                         <div class="flex justify-between items-center mb-4">
+                            ${AppState.isRoomHost ? `<button onclick="window.returnToLobby()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm">Stop Game</button>` : '<div></div>'}
+                            <h2 class="text-2xl font-bold text-white">${puzzleName}</h2>
+                            <div></div>
                         </div>
-                        <div class="text-center w-1/3">
-                            <p class="text-xs text-gray-400 uppercase">Status</p>
-                            <p class="text-xl font-bold ${isSolved ? 'text-green-400' : 'text-teal-400'}">
-                                ${isSolved ? 'SOLVED' : matrix.display ? 'MEMORIZE' : 'PLAY'}
-                            </p>
+
+                        <div class="flex justify-center gap-8 mb-6 bg-gray-800 p-4 rounded-xl">
+                            <div><p class="text-xs text-gray-400">Timer</p><p id="timer-display" class="text-2xl font-bold">${timer}s</p></div>
+                            <div><p class="text-xs text-gray-400">Mistakes</p><p class="text-2xl font-bold text-red-400">${mistakes}</p></div>
+                            <div><p class="text-xs text-gray-400">Your Score</p><p class="text-2xl font-bold text-gold-400">${Math.max(0, 100 - (timer*0.5) - (mistakes*10)).toFixed(0)}</p></div>
                         </div>
+
+                        ${gameBoardHtml}
                     </div>
 
-                    ${gridHtml}
+                    <!-- LIVE SCOREBOARD -->
+                    <div class="w-full md:w-64 bg-gray-800 p-4 rounded-xl h-fit">
+                        <h3 class="font-bold border-b border-gray-700 pb-2 mb-4 text-teal-400">Live Scores</h3>
+                        <div class="space-y-2">
+                            ${room.players.sort((a,b) => b.score - a.score).map(p => `
+                                <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50 ring-1 ring-teal-500' : 'bg-gray-700'}">
+                                    <div class="w-2 h-2 rounded-full mr-2 ${p.isSpectator ? 'bg-gray-500' : 'bg-green-500'}"></div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="truncate text-sm font-medium">${p.name}</p>
+                                        <p class="text-xs text-gold-400 font-bold">${p.score} pts</p>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
                 </div>
             `;
         }
@@ -630,50 +781,82 @@
             if (AppState.currentRoom) {
                 const r = AppState.currentRoom;
                 return `
-                    <div class="max-w-4xl mx-auto px-4 py-10 w-full">
+                    <div class="max-w-5xl mx-auto px-4 py-10 w-full">
                         <button onclick="window.leaveRoom()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
                             <i class="fa-solid fa-arrow-left mr-2"></i> Leave Room
                         </button>
-                        <div class="flex items-center justify-between mb-2">
-                            <h1 class="text-4xl font-extrabold text-teal-400">Room: ${r.roomCode}</h1>
-                            <button onclick="window.copyRoomCode('${r.roomCode}')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
-                                <i class="fa-solid fa-copy"></i> Copy Code
-                            </button>
+                        
+                        <div class="bg-gray-800 p-6 rounded-xl border-l-4 border-teal-500 shadow-lg mb-8">
+                            <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+                                <div>
+                                    <h1 class="text-4xl font-extrabold text-white mb-1">Room: ${r.roomCode}</h1>
+                                    <p class="text-gray-400 text-sm">Share this code with friends to play together.</p>
+                                </div>
+                                <div class="flex gap-4 items-center">
+                                    ${AppState.isRoomHost ? `
+                                        <div class="relative group">
+                                            <select onchange="window.selectRoomPuzzle(this.value)" class="bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-teal-400 outline-none appearance-none pr-8 cursor-pointer hover:bg-gray-600 transition">
+                                                ${PUZZLE_NAMES.map((name, idx) => `
+                                                    <option value="${idx}" ${r.activePuzzleIdx == idx ? 'selected' : ''}>${name}</option>
+                                                `).join('')}
+                                            </select>
+                                            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-white">
+                                                <i class="fa-solid fa-chevron-down text-xs"></i>
+                                            </div>
+                                        </div>
+                                        <button onclick="window.startRoomGame()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg animate-pulse">
+                                            START GAME
+                                        </button>
+                                    ` : `
+                                        <div class="bg-gray-700 px-4 py-2 rounded text-center">
+                                            <p class="text-xs text-gray-400 uppercase">Selected Game</p>
+                                            <p class="font-bold text-teal-400">${PUZZLE_NAMES[r.activePuzzleIdx]}</p>
+                                        </div>
+                                        <div class="bg-gray-900 px-4 py-2 rounded border border-gray-700">
+                                            <p class="text-sm text-gray-300">Waiting for Host...</p>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
                         </div>
-                        <p class="text-gray-400 mb-2">Mode: ${r.mode} | Status: ${r.status}</p>
-                        <p class="text-xs text-teal-400 mb-6 flex items-center gap-2">
-                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Live Connection
-                        </p>
 
                         <div class="grid md:grid-cols-2 gap-6">
-                            <div class="bg-gray-800 p-6 rounded-xl">
-                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players (${r.players.length})</h3>
-                                <div class="space-y-2">
+                            <!-- Players List -->
+                            <div class="bg-gray-800 p-6 rounded-xl shadow-lg">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4 flex justify-between">
+                                    <span>Players</span>
+                                    <span class="text-teal-400">${r.players.length}/8</span>
+                                </h3>
+                                <div class="space-y-2 max-h-80 overflow-y-auto pr-2">
                                     ${r.players.map(p => `
-                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50 ring-1 ring-teal-500' : 'bg-gray-700'}">
-                                            <div class="w-2 h-2 rounded-full mr-2 ${p.status === 'ready' ? 'bg-green-500' : 'bg-red-500'}"></div>
-                                            <span>${p.name}${p.id === AppState.userId ? ' (You)' : ''}</span>
-                                            <span class="ml-auto text-sm text-gray-400">${p.score} pts</span>
+                                        <div class="flex items-center p-3 rounded-lg ${p.id === AppState.userId ? 'bg-teal-900/30 border border-teal-500/50' : 'bg-gray-700/50'}">
+                                            <div class="w-3 h-3 rounded-full mr-3 ${p.status === 'ready' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
+                                            <span class="font-medium">${p.name}${p.id === AppState.userId ? ' (You)' : ''}</span>
+                                            ${p.id === r.hostId ? '<span class="ml-2 text-xs bg-gold-600 text-black px-1 rounded font-bold">HOST</span>' : ''}
                                         </div>
                                     `).join('')}
                                 </div>
                             </div>
 
-                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-96">
-                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Chat</h3>
-                                <div id="chat-box" class="flex-1 overflow-y-auto mb-2 space-y-2 p-2 bg-gray-900 rounded">
-                                    ${r.chat && r.chat.length === 0 ? '<p class="text-gray-500 text-sm text-center mt-4">No messages yet...</p>' : r.chat.map(msg => `
-                                        <div class="text-sm ${msg.senderId === AppState.userId ? 'text-right' : 'text-left'}">
-                                            <span class="inline-block px-2 py-1 rounded ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
-                                                <b>${msg.senderName}:</b> ${msg.text}
-                                            </span>
+                            <!-- Chat -->
+                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-96 shadow-lg">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Room Chat</h3>
+                                <div id="chat-box" class="flex-1 overflow-y-auto mb-4 space-y-3 p-2">
+                                    ${r.chat && r.chat.length === 0 ? '<p class="text-gray-500 text-sm text-center mt-10">Waiting for players...</p>' : r.chat.map(msg => `
+                                        <div class="text-sm flex flex-col ${msg.senderId === AppState.userId ? 'items-end' : msg.senderId === 'SYSTEM' ? 'items-center' : 'items-start'}">
+                                            ${msg.senderId === 'SYSTEM' ? 
+                                                `<span class="text-xs text-gray-500 bg-gray-900 px-2 py-1 rounded-full border border-gray-700">${msg.text}</span>` :
+                                                `<span class="text-xs text-gray-400 mb-1 ml-1">${msg.senderName}</span>
+                                                 <span class="px-3 py-2 rounded-lg max-w-[85%] ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white rounded-tr-none' : 'bg-gray-700 text-gray-200 rounded-tl-none'}">
+                                                    ${msg.text}
+                                                 </span>`
+                                            }
                                         </div>
                                     `).join('')}
                                 </div>
-                                <form onsubmit="window.sendChat(event)" class="flex">
-                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type a message..." required>
-                                    <button type="submit" class="bg-gold-600 hover:bg-gold-700 px-4 rounded-r font-bold text-gray-900">Send</button>
+                                <form onsubmit="window.sendChat(event)" class="flex gap-2">
+                                    <input type="text" id="chat-input" class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-teal-400 outline-none transition" placeholder="Type a message..." required>
+                                    <button type="submit" class="bg-gold-600 hover:bg-gold-700 px-4 py-2 rounded-lg font-bold text-gray-900 transition"><i class="fa-solid fa-paper-plane"></i></button>
                                 </form>
                             </div>
                         </div>
@@ -685,33 +868,48 @@
                         <h1 class="text-4xl font-extrabold text-white mb-2">Multiplayer Lobby</h1>
                         <p class="text-sm text-teal-400 mb-6 flex items-center gap-2">
                             <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Cross-device multiplayer enabled
+                            Live Cross-Device Multiplayer
                         </p>
                         
-                        <div class="bg-gray-800 p-6 rounded-xl mb-8 border border-gold-600/50 shadow-lg">
-                            <h2 class="text-2xl font-bold text-gold-400 mb-4">Create or Join</h2>
-                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                                <button onclick="window.createRoom('1v1')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 1v1</button>
-                                <button onclick="window.createRoom('2v2')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 2v2</button>
+                        <div class="bg-gray-800 p-8 rounded-xl mb-8 border border-gold-600/50 shadow-lg relative overflow-hidden">
+                            <div class="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+                            
+                            <h2 class="text-2xl font-bold text-gold-400 mb-6">Create or Join Room</h2>
+                            <div class="flex flex-col md:flex-row gap-6">
+                                <div class="flex-1 space-y-4">
+                                    <button onclick="window.createRoom('Standard')" class="w-full py-4 bg-teal-600 hover:bg-teal-700 rounded-xl font-bold text-lg shadow-lg transition transform hover:-translate-y-1">
+                                        Create New Room
+                                    </button>
+                                    <p class="text-xs text-gray-400 text-center">Create a room and invite friends via code.</p>
+                                </div>
+                                <div class="flex items-center justify-center text-gray-500 font-bold">OR</div>
+                                <div class="flex-1 space-y-4">
+                                    <div class="flex gap-2">
+                                        <input id="room-code-input" type="text" maxlength="4" placeholder="ROOM CODE" class="flex-1 bg-gray-900 rounded-xl px-4 py-4 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none text-center font-mono text-xl tracking-widest">
+                                        <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-8 rounded-xl shadow-lg transition">JOIN</button>
+                                    </div>
+                                    <p class="text-xs text-gray-400 text-center">Enter a 4-letter code from a host.</p>
+                                </div>
                             </div>
-                            <div class="flex gap-2">
-                                <input id="room-code-input" type="text" maxlength="4" placeholder="Enter 4-Letter Code" class="flex-1 bg-gray-700 rounded px-4 py-2 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none">
-                                <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-6 rounded">Join</button>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-3">💡 Share the room code with friends on other devices to play together!</p>
                         </div>
 
-                        <h2 class="text-2xl font-bold mb-4">Active Public Rooms</h2>
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2"><i class="fa-solid fa-list text-teal-400"></i> Open Rooms</h2>
                         <div class="space-y-3">
-                            ${AppState.activeRooms.length === 0 ? '<p class="text-gray-500">No active rooms found. Create one!</p>' : 
+                            ${AppState.activeRooms.length === 0 ? 
+                                '<div class="p-8 text-center bg-gray-800/50 rounded-xl border border-dashed border-gray-700"><p class="text-gray-500">No open lobbies found. Be the first to create one!</p></div>' : 
                                 AppState.activeRooms.map(r => `
-                                    <div class="flex justify-between items-center p-4 bg-gray-800 rounded hover:bg-gray-700 transition">
-                                        <div>
-                                            <span class="text-teal-400 font-bold text-lg mr-2">${r.roomCode}</span>
-                                            <span class="text-gray-400 text-sm">${r.mode}</span>
-                                            <span class="text-gray-500 text-xs ml-2">(${r.players.length} player${r.players.length > 1 ? 's' : ''})</span>
+                                    <div class="flex justify-between items-center p-4 bg-gray-800 rounded-xl hover:bg-gray-750 transition border border-transparent hover:border-gray-600 shadow-sm">
+                                        <div class="flex items-center gap-4">
+                                            <div class="bg-gray-700 px-3 py-1 rounded text-teal-400 font-mono font-bold">${r.roomCode}</div>
+                                            <div>
+                                                <div class="font-bold text-white text-sm">Host: <span class="text-gray-400">Player-${r.hostId.substring(0,4)}</span></div>
+                                                <div class="text-xs text-gray-500">Puzzle: ${PUZZLE_NAMES[r.activePuzzleIdx]}</div>
+                                            </div>
                                         </div>
-                                        <button onclick="window.joinRoom('${r.roomCode}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm">Join</button>
+                                        <div class="flex items-center gap-4">
+                                            <div class="text-xs text-gray-400"><i class="fa-solid fa-user"></i> ${r.players.length}/8</div>
+                                            <button onclick="window.joinRoom('${r.roomCode}')" class="bg-teal-600 hover:bg-teal-700 px-4 py-2 rounded-lg font-bold text-sm shadow">Join</button>
+                                        </div>
                                     </div>
                                 `).join('')}
                         </div>
@@ -739,7 +937,7 @@
                             <p class="text-5xl font-extrabold text-white mt-2">${completed} / ${TOTAL_PUZZLES}</p>
                         </div>
                         <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-yellow-500 shadow-lg">
-                            <p class="text-gray-400 text-sm">Total Levels Completed</p>
+                            <p class="text-gray-400 text-sm">Levels Completed</p>
                             <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.totalCompleted}</p>
                         </div>
                         <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-red-500 shadow-lg">
@@ -764,6 +962,7 @@
                 case 'levelSelect': contentHtml = renderLevelSelect(); break;
                 case 'puzzle': contentHtml = renderPuzzle(); break;
                 case 'lobby': contentHtml = renderLobby(); break;
+                case 'multiplayerGame': contentHtml = renderMultiplayerGame(); break;
                 case 'profile': contentHtml = renderProfile(); break;
                 default: contentHtml = renderHome(); break;
             }
@@ -773,16 +972,16 @@
             main.innerHTML = contentHtml;
             app.appendChild(main);
             
+            // Auto-scroll chat
             if (AppState.currentPage === 'lobby' && AppState.currentRoom) {
                 const box = document.getElementById('chat-box');
-                if(box) {
-                    // Scroll to bottom smoothly
-                    setTimeout(() => box.scrollTop = box.scrollHeight, 100);
-                }
+                if(box) setTimeout(() => box.scrollTop = box.scrollHeight, 50);
             }
         }
 
-        // ACTION HANDLERS
+        // --- GAME LOGIC ---
+
+        // SOLO LOGIC
         window.navTo = async (page) => { 
             AppState.currentPage = page; 
             if (page === 'lobby') {
@@ -803,20 +1002,6 @@
             renderApp(); 
         };
 
-        window.resetProgress = async () => {
-            if (confirm('⚠️ This will delete ALL your progress and data. Continue?')) {
-                // To do: delete from Firestore
-                const progressRef = doc(db, 'artifacts', AppState.appId, 'users', AppState.userId, 'data', 'progress');
-                await setDoc(progressRef, { 
-                    totalCompleted: 0,
-                    puzzles: {}, // Needs regeneration
-                    achievements: []
-                }); 
-                location.reload();
-            }
-        };
-
-        // PUZZLE LOGIC
         window.startPuzzle = (levelIdx) => {
             const gridSize = 3 + Math.floor(levelIdx / 5);
             AppState.puzzleState = {
@@ -824,7 +1009,7 @@
                 mistakes: 0,
                 isSolved: false,
                 currentLevel: levelIdx,
-                matrix: generateMatrix(gridSize),
+                matrix: generateMatrix(gridSize, Math.random),
                 timerInterval: setInterval(() => {
                     AppState.puzzleState.timer++;
                     const tEl = document.getElementById('timer-display');
@@ -846,12 +1031,12 @@
             renderApp();
         };
 
-        function generateMatrix(size) {
+        function generateMatrix(size, randFunc) {
             const sequence = [];
             const maxCells = Math.min(8, Math.floor(size * size / 2));
             while (sequence.length < maxCells) {
-                const r = Math.floor(Math.random() * size);
-                const c = Math.floor(Math.random() * size);
+                const r = Math.floor(randFunc() * size);
+                const c = Math.floor(randFunc() * size);
                 const pos = `${r}-${c}`;
                 if (!sequence.includes(pos)) sequence.push(pos);
             }
@@ -859,14 +1044,13 @@
         }
 
         window.handleGameClick = (r, c) => {
-            const { isSolved, matrix, currentLevel } = AppState.puzzleState;
+            const { isSolved, matrix } = AppState.puzzleState;
             if (isSolved || matrix.display) return;
             
             const pos = `${r}-${c}`;
             if (matrix.sequence.includes(pos)) {
                 if (!matrix.userSequence.includes(pos)) {
                     matrix.userSequence.push(pos);
-                    
                     if (matrix.userSequence.length === matrix.sequence.length) {
                         completePuzzle();
                     } else {
@@ -876,20 +1060,17 @@
             } else {
                 AppState.puzzleState.mistakes++;
                 showMessage('Wrong tile! Resetting...', 'Oops');
-                AppState.puzzleState.matrix = generateMatrix(matrix.size);
+                // Reset user sequence in solo, regenerate in MP? For solo just reset display
                 AppState.puzzleState.matrix.display = true;
+                AppState.puzzleState.matrix.userSequence = [];
                 renderApp();
                 setTimeout(() => {
                     AppState.puzzleState.matrix.display = false;
                     renderApp();
-                }, 2000);
+                }, 1500);
             }
         };
-
-        window.solvePuzzleSim = () => {
-            completePuzzle();
-        };
-
+        
         async function completePuzzle() {
             AppState.puzzleState.isSolved = true;
             clearInterval(AppState.puzzleState.timerInterval);
@@ -902,46 +1083,96 @@
             const time = AppState.puzzleState.timer;
             const mistakes = AppState.puzzleState.mistakes;
             const score = Math.max(0, 100 - (time * 0.5) - (mistakes * 10));
-            const stars = mistakes === 0 && time < 30 ? 3 : mistakes < 2 && time < 60 ? 2 : 1;
             
             level.status = 'completed';
             level.score = Math.max(level.score, score);
-            level.time = level.time === 0 ? time : Math.min(level.time, time);
-            level.stars = Math.max(level.stars, stars);
+            puzzle.levelsCompleted++;
+            AppState.userProgress.totalCompleted++;
             
-            if (puzzle.levelsCompleted < (AppState.selectedStage * LEVELS_PER_STAGE + AppState.puzzleState.currentLevel + 1)) {
-                puzzle.levelsCompleted++;
-                AppState.userProgress.totalCompleted++;
-            }
-            
+            // Unlock next
             const nextLevelIdx = AppState.puzzleState.currentLevel + 1;
-            if (nextLevelIdx < LEVELS_PER_STAGE) {
-                stage.levels[nextLevelIdx].status = 'unlocked';
-            } else {
-                const nextStageIdx = AppState.selectedStage + 1;
-                if (nextStageIdx < STAGES_PER_PUZZLE) {
-                    puzzle.stages[nextStageIdx].levels[0].status = 'unlocked';
-                } else {
-                    const nextPuzzleIdx = AppState.selectedPuzzle + 1;
-                    if (nextPuzzleIdx < TOTAL_PUZZLES) {
-                        AppState.userProgress.puzzles[nextPuzzleIdx].stages[0].levels[0].status = 'unlocked';
-                    }
-                }
-            }
+            if (nextLevelIdx < LEVELS_PER_STAGE) stage.levels[nextLevelIdx].status = 'unlocked';
             
             await saveProgress();
-            showMessage(`Solved in ${time}s with ${mistakes} mistakes! Score: ${Math.round(score)}`, 'Victory!');
+            showMessage(`Solved in ${time}s!`, 'Victory!');
             renderApp();
         }
 
-        // MULTIPLAYER HANDLERS
+        window.solvePuzzleSim = () => completePuzzle();
+
+        // --- MULTIPLAYER GAMEPLAY LOGIC ---
+
+        window.selectRoomPuzzle = async (idx) => {
+            if (AppState.currentRoom) {
+                await MultiplayerService.updateRoomSettings(AppState.currentRoom.roomCode, { activePuzzleIdx: parseInt(idx) });
+            }
+        };
+
+        window.startRoomGame = async () => {
+            if (AppState.currentRoom) {
+                await MultiplayerService.updateRoomSettings(AppState.currentRoom.roomCode, { 
+                    status: 'playing',
+                    gameSeed: Math.random() // Generate new seed for everyone
+                });
+            }
+        };
+
+        window.returnToLobby = async () => {
+             if (AppState.currentRoom) {
+                await MultiplayerService.updateRoomSettings(AppState.currentRoom.roomCode, { status: 'lobby' });
+            }
+        };
+
+        window.handleMultiplayerClick = async (r, c) => {
+            const { isSolved, matrix } = AppState.puzzleState;
+            if (isSolved || matrix.display) return;
+
+            const pos = `${r}-${c}`;
+            if (matrix.sequence.includes(pos)) {
+                if (!matrix.userSequence.includes(pos)) {
+                    matrix.userSequence.push(pos);
+                    // Update Score
+                    const currentScore = Math.max(0, 100 - (AppState.puzzleState.timer * 0.5) - (AppState.puzzleState.mistakes * 10));
+                    await MultiplayerService.updatePlayerScore(AppState.currentRoom.roomCode, Math.floor(currentScore));
+
+                    if (matrix.userSequence.length === matrix.sequence.length) {
+                        AppState.puzzleState.isSolved = true;
+                        clearInterval(AppState.puzzleState.timerInterval);
+                        showConfetti();
+                        // Final score boost
+                        await MultiplayerService.updatePlayerScore(AppState.currentRoom.roomCode, Math.floor(currentScore + 50));
+                        renderApp();
+                    } else {
+                        renderApp();
+                    }
+                }
+            } else {
+                AppState.puzzleState.mistakes++;
+                const currentScore = Math.max(0, 100 - (AppState.puzzleState.timer * 0.5) - (AppState.puzzleState.mistakes * 10));
+                await MultiplayerService.updatePlayerScore(AppState.currentRoom.roomCode, Math.floor(currentScore));
+                
+                showMessage('Wrong tile! Try again.', 'Oops');
+                AppState.puzzleState.matrix.userSequence = [];
+                AppState.puzzleState.matrix.display = true;
+                renderApp();
+                setTimeout(() => {
+                    AppState.puzzleState.matrix.display = false;
+                    renderApp();
+                }, 1500);
+            }
+        };
+
+        window.simulateMultiplayerScore = async () => {
+             await MultiplayerService.updatePlayerScore(AppState.currentRoom.roomCode, Math.floor(Math.random() * 100));
+        }
+
+        // MULTIPLAYER LOBBY HANDLERS
         window.createRoom = async (mode) => {
             try {
                 const room = await MultiplayerService.createRoom(mode);
                 AppState.currentRoom = room;
                 setupRoomListener(room.roomCode);
                 AppState.activeRooms = await MultiplayerService.getActiveRooms();
-                showMessage(`Room created! Code: ${room.roomCode}`, '🎮 Room Ready');
                 renderApp();
             } catch (e) {
                 console.error(e);
@@ -956,7 +1187,6 @@
             } else {
                 AppState.currentRoom = res;
                 setupRoomListener(code);
-                showMessage(`Joined room ${code}!`, '✅ Connected');
                 renderApp();
             }
         };
@@ -966,29 +1196,19 @@
             if(val.length === 4) await window.joinRoom(val);
         };
 
-        window.leaveRoom = async (updateDb = true) => {
+        window.leaveRoom = async () => {
             if (unsubscribeRoomListener) {
                 unsubscribeRoomListener();
                 unsubscribeRoomListener = null;
             }
-            
-            // Optional: Remove user from room in DB here if desired, otherwise host handles cleanup logic (omitted for brevity)
+            if(AppState.puzzleState.timerInterval) clearInterval(AppState.puzzleState.timerInterval);
             
             AppState.currentRoom = null;
+            AppState.currentPage = 'lobby';
             AppState.activeRooms = await MultiplayerService.getActiveRooms();
             renderApp();
         };
-
-        window.copyRoomCode = (code) => {
-            const temp = document.createElement('input');
-            document.body.appendChild(temp);
-            temp.value = code;
-            temp.select();
-            document.execCommand('copy');
-            document.body.removeChild(temp);
-            showMessage('Room code copied to clipboard!', '📋 Copied');
-        };
-
+        
         window.sendChat = async (e) => {
             e.preventDefault();
             const input = document.getElementById('chat-input');
