@@ -3,1053 +3,312 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Nexus - Multiplayer Memory</title>
-    <!-- Tailwind CSS CDN -->
+    <title>Puzzle Nexus</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Font Awesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
-        /* Custom Gold/Dark Theme for Aesthetics */
-        :root {
-            --primary: #FFC72C; /* Gold */
-            --secondary: #1F2937; /* Dark Gray */
-            --background: #0F172A; /* Deep Blue/Black */
-        }
-
-        body { background-color: var(--background); color: #F3F4F6; font-family: 'Inter', sans-serif; }
+        .text-gold-400 { color: #FFD700; }
+        .bg-gold-600 { background-color: #FFC72C; }
+        .hover\:bg-gold-700:hover { background-color: #FFB300; }
+        .shadow-gold-500\/50 { box-shadow: 0 10px 15px -3px rgba(255, 199, 44, 0.5), 0 4px 6px -4px rgba(255, 199, 44, 0.5); }
         
-        /* Utility Classes for Tailwind to pick up dynamic grid classes */
-        .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-        .grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+        .shadow-rainbow {
+            box-shadow: 
+                0 0 10px rgba(0, 255, 255, 0.4),
+                0 0 20px rgba(255, 215, 0, 0.4),
+                0 0 30px rgba(255, 0, 255, 0.2);
+        }
 
-        .btn-primary { 
-            @apply bg-primary text-secondary font-bold py-3 px-6 rounded-lg shadow-lg transition duration-200 hover:bg-yellow-400 hover:shadow-xl; 
+        @keyframes fall {
+            0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
         }
-        .btn-secondary { 
-            @apply bg-gray-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-200 hover:bg-gray-500 hover:shadow-xl; 
+        .confetti-piece {
+            position: absolute;
+            animation-name: fall;
+            animation-timing-function: linear;
+            animation-iteration-count: infinite;
+            border-radius: 50%;
         }
-        .card { 
-            transition: transform 0.6s, background-color 0.3s, opacity 0.3s;
-            transform-style: preserve-3d;
-            perspective: 1000px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
-        }
-        .card:not(.bg-green-700):hover {
-            box-shadow: 0 8px 12px rgba(255, 199, 44, 0.5); /* Gold hover shadow */
-        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
-    <div id="app-container" class="flex-grow flex flex-col max-w-4xl mx-auto w-full p-4 sm:p-6 lg:p-8">
-        <!-- Navigation Bar -->
-        <nav id="nav-bar" class="flex justify-between items-center p-4 bg-secondary rounded-xl shadow-2xl mb-6">
-            <!-- Content will be rendered by renderNavBar() -->
-        </nav>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
 
-        <!-- Main Content Area -->
-        <main id="content-area" class="flex-grow bg-gray-800 rounded-xl shadow-2xl p-6">
-            <!-- Page content will be rendered here -->
-            <div class="text-center text-gray-400">Loading application...</div>
-        </main>
-
-        <!-- Message/Modal Area -->
-        <div id="message-container" class="fixed bottom-4 right-4 z-50"></div>
+    <div id="app" class="min-h-screen flex flex-col">
+        <div class="flex items-center justify-center h-screen">
+            <div class="text-xl text-teal-400 animate-pulse">Initializing System...</div>
+        </div>
     </div>
 
+    <div id="modal-container"></div>
+    <div id="confetti-container"></div>
+
     <script type="module">
-        // =================================================================
-        // Firebase Modular Imports
-        // =================================================================
-        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        /*
+         * PUZZLE NEXUS - Cross-Device Multiplayer Puzzle Game
+         * Fully integrated with Firebase Firestore for Real-Time Gameplay
+         */
+
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, query, where, getDocs, runTransaction, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // =================================================================
-        // Global State & Constants
-        // =================================================================
+        // GAME CONSTANTS
+        const TOTAL_PUZZLES = 30;
+        const STAGES_PER_PUZZLE = 10;
+        const LEVELS_PER_STAGE = 20;
 
-        let db;
-        let auth;
-        const ROOM_COLLECTION_PATH = (appId) => `artifacts/${appId}/public/data/memoryRooms`;
-        const ROOM_CODE_LENGTH = 5;
-        const MAX_PLAYERS = 2; // Fixed max players for simplicity
+        const PUZZLE_NAMES = [
+            "Sequential Memory Matrix", "Ultimate Riddle Challenge", "Three Gods Logic", 
+            "Einstein's Riddle", "Knights & Knaves", "Monty Hall Simulator", 
+            "River Crossing", "Balance Scale Detective", "Logic Grids", "Masyu Loops", 
+            "Nonograms", "Rope Burning Timer", "Light Switch Puzzle", "Smudged Faces", 
+            "Zebra Variants", "Pattern Recognition", "Cryptarithmetic", "Towers of Hanoi", 
+            "Sliding Block Puzzle", "Pentominoes", "Sokoban", "Futoshiki", "Kakuro", 
+            "Skyscrapers", "Hashiwokakero", "Black Box Logic", "Ami-gami", 
+            "Stirling Numbers Challenge", "The Fifteen Puzzle", "Hidden Path Finder"
+        ];
 
-        let AppState = {
-            page: 'home',
-            isAuthReady: false,
+        // GLOBAL FIREBASE STATE
+        let db, auth;
+        let unsubscribeRoomListener = null;
+
+        // APPLICATION STATE
+        const AppState = {
             userId: null,
-            userName: null,
-            db: null,
             appId: null,
-
-            // Multiplayer State
-            roomId: null,
-            roomCode: null,
-            isHost: false,
-            roomRef: null,
-            currentRoom: null, // Holds the live room data from onSnapshot
-            unsubscribeRoom: null, // Listener cleanup function
-
-            // Single Player State
-            singlePlayer: {
-                level: 1,
-                gridSize: 4,
-                puzzleGrid: [], // { index, value }
-                flippedCards: [], // Card indices that are currently flipped
-                matchedCards: {}, // { index: true }
-                lastFlipTime: 0,
-                score: 0,
-                scoreMultiplier: 100
-            }
-        };
-
-        // =================================================================
-        // UI Rendering Functions
-        // =================================================================
-
-        const renderApp = () => {
-            renderNavBar();
-            renderPage();
-        };
-
-        const renderNavBar = () => {
-            const navBar = document.getElementById('nav-bar');
-            let navContent = `
-                <h1 class="text-2xl font-extrabold text-primary">Puzzle Nexus</h1>
-                <div class="flex items-center space-x-4">
-            `;
-
-            if (AppState.userId) {
-                // Show user info
-                navContent += `<span class="text-sm text-gray-400 hidden sm:inline">User: <span class="text-white font-mono">${AppState.userId.substring(0, 8)}...</span></span>`;
-            }
-
-            // Navigation buttons
-            if (AppState.page !== 'home' && !AppState.roomId) {
-                navContent += `<button onclick="navTo('home')" class="btn-secondary py-2 px-4 text-sm">Home</button>`;
-            }
-
-            if (AppState.roomId) {
-                 navContent += `<button onclick="leaveRoom()" class="btn-secondary py-2 px-4 text-sm bg-red-600 hover:bg-red-500">
-                    <i class="fa-solid fa-right-from-bracket"></i> Leave Room
-                </button>`;
-            }
+            currentPage: 'home',
+            selectedPuzzle: null,
+            selectedStage: null,
+            userProgress: null,
+            activeRooms: [],
+            currentRoom: null,
             
-            navContent += `</div>`;
-            navBar.innerHTML = navContent;
-        };
-
-        const renderPage = () => {
-            const contentArea = document.getElementById('content-area');
-            let html = '';
-
-            switch (AppState.page) {
-                case 'home':
-                    html = renderHomePage();
-                    break;
-                case 'single-player-menu':
-                    html = renderSinglePlayerMenu();
-                    break;
-                case 'multiplayer-menu':
-                    html = renderMultiplayerMenu();
-                    break;
-                case 'game':
-                    html = renderSinglePlayerGame();
-                    break;
-                case 'multiplayer-lobby':
-                    html = renderMultiplayerLobby();
-                    break;
-                case 'multiplayer-game':
-                    html = renderMultiplayerGame();
-                    break;
-                default:
-                    html = `<div class="text-center text-lg mt-10">404 | Page not found.</div>`;
-            }
-
-            contentArea.innerHTML = html;
-
-            // Re-render the single-player grid if needed after the container is added
-            if (AppState.page === 'game') {
-                renderPuzzleGrid(AppState.singlePlayer);
-            }
-
-            // Re-render the multiplayer grid if needed (listener usually handles this)
-            if (AppState.page === 'multiplayer-game' && AppState.currentRoom) {
-                renderMultiplayerPuzzleGrid(AppState.currentRoom);
+            puzzleState: {
+                timer: 0,
+                isSolved: false,
+                mistakes: 0,
+                currentLevel: 0,
+                matrix: { size: 3, sequence: [], userSequence: [], display: true },
+                timerInterval: null
             }
         };
 
-        const renderHomePage = () => `
-            <div class="text-center py-12">
-                <h2 class="text-4xl font-bold mb-4 text-primary">Welcome to Puzzle Nexus!</h2>
-                <p class="text-xl text-gray-300 mb-8">Test your memory against yourself or a friend.</p>
-                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-                    <button onclick="navTo('single-player-menu')" class="btn-primary">
-                        <i class="fa-solid fa-user"></i> Single Player
-                    </button>
-                    <button onclick="navTo('multiplayer-menu')" class="btn-secondary">
-                        <i class="fa-solid fa-users"></i> Multiplayer
-                    </button>
-                </div>
-            </div>
-        `;
-
-        const renderSinglePlayerMenu = () => `
-            <div class="text-center py-8">
-                <h2 class="text-3xl font-bold mb-6 text-primary">Single Player Mode</h2>
-                <p class="text-gray-400 mb-8">Click start to begin the memory challenge. The grid size increases with each level!</p>
-                <button onclick="startGame()" class="btn-primary">
-                    <i class="fa-solid fa-play"></i> Start Game (Level ${AppState.singlePlayer.level}, ${AppState.singlePlayer.gridSize}x${AppState.singlePlayer.gridSize})
-                </button>
-            </div>
-        `;
-
-        const renderSinglePlayerGame = () => `
-            <div class="flex flex-col items-center">
-                <div class="flex justify-between w-full max-w-md mb-4 text-lg font-mono">
-                    <span class="text-gray-300">Level: <span class="text-primary">${AppState.singlePlayer.level}</span></span>
-                    <span class="text-gray-300">Score: <span class="text-primary">${AppState.singlePlayer.score}</span></span>
-                </div>
-                <div id="puzzle-grid-container" class="grid grid-cols-${AppState.singlePlayer.gridSize} gap-2 p-4 max-w-lg w-full bg-gray-700 rounded-lg shadow-xl">
-                    <!-- Grid rendered by renderPuzzleGrid -->
-                </div>
-                <div class="mt-8 space-x-4">
-                    <button onclick="resetSinglePlayerGame()" class="btn-secondary bg-red-600 hover:bg-red-500">
-                        <i class="fa-solid fa-arrows-rotate"></i> Restart Level
-                    </button>
-                    <button id="next-level-btn" onclick="nextSinglePlayerLevel()" class="btn-primary opacity-50 cursor-not-allowed" disabled>
-                        <i class="fa-solid fa-chevron-right"></i> Next Level
-                    </button>
-                </div>
-            </div>
-        `;
-
-        const renderMultiplayerMenu = () => `
-            <div class="text-center py-8">
-                <h2 class="text-3xl font-bold mb-6 text-primary">Multiplayer Mode</h2>
-                <p class="text-gray-400 mb-8">Create a room to host a game or join an existing one with a code.</p>
-                
-                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4 mb-10">
-                    <button onclick="createRoom()" class="btn-primary">
-                        <i class="fa-solid fa-plus-circle"></i> Create Room
-                    </button>
-                </div>
-
-                <div class="max-w-md mx-auto p-6 bg-gray-700 rounded-lg shadow-inner">
-                    <h3 class="text-xl font-semibold mb-4 text-white">Join Room</h3>
-                    <form onsubmit="handleJoinForm(event)" class="flex flex-col space-y-3">
-                        <input type="text" id="room-code-input" placeholder="Enter 5-digit Room Code" 
-                               class="p-3 rounded-lg bg-gray-600 text-white placeholder-gray-400 uppercase tracking-widest text-center focus:ring-primary focus:border-primary border-transparent border-2 transition" 
-                               maxlength="${ROOM_CODE_LENGTH}" required>
-                        <button type="submit" class="btn-secondary">
-                            <i class="fa-solid fa-door-open"></i> Join Game
-                        </button>
-                    </form>
-                </div>
-            </div>
-        `;
-
-        const renderMultiplayerLobby = () => {
-            const isHost = AppState.isHost;
-            const players = AppState.currentRoom ? Object.values(AppState.currentRoom.players) : [];
-            const canStart = isHost && players.length >= 2;
-
-            return `
-                <div class="max-w-xl mx-auto py-4">
-                    <h2 class="text-3xl font-bold mb-6 text-primary text-center">Game Lobby</h2>
-
-                    <div class="bg-gray-700 p-6 rounded-lg shadow-xl mb-6">
-                        <div class="flex justify-center items-center mb-4 space-x-2">
-                            <span class="text-2xl font-mono tracking-widest text-white">
-                                ROOM CODE: <span id="room-code-display" class="text-primary font-extrabold">${AppState.roomCode}</span>
-                            </span>
-                            <button onclick="copyRoomCode()" class="text-gray-400 hover:text-primary transition">
-                                <i class="fa-solid fa-copy"></i>
-                            </button>
-                        </div>
-                        <p class="text-center text-gray-400 text-sm">Share this code with a friend to join!</p>
-                    </div>
-
-                    <div class="flex space-x-6">
-                        <!-- Player List -->
-                        <div class="flex-1 bg-gray-700 p-4 rounded-lg shadow-inner">
-                            <h3 class="text-xl font-semibold mb-3 text-white">Players (${players.length}/${MAX_PLAYERS})</h3>
-                            <ul id="multiplayer-player-list">
-                                <!-- Players dynamically updated by listener -->
-                            </ul>
-                        </div>
-
-                        <!-- Chat Area -->
-                        <div class="flex-1 bg-gray-700 p-4 rounded-lg shadow-inner flex flex-col h-64">
-                            <h3 class="text-xl font-semibold mb-3 text-white">Chat</h3>
-                            <div id="multiplayer-chat-messages" class="flex-grow overflow-y-auto mb-3 p-2 bg-gray-800 rounded">
-                                <!-- Chat messages dynamically updated by listener -->
-                            </div>
-                            <div class="flex">
-                                <input type="text" id="chat-input" placeholder="Type a message..." class="flex-grow p-2 rounded-l-lg bg-gray-600 text-white placeholder-gray-400 border-transparent focus:ring-primary focus:border-primary border-2">
-                                <button onclick="sendChat()" class="bg-primary text-secondary p-2 rounded-r-lg hover:bg-yellow-400">
-                                    <i class="fa-solid fa-paper-plane"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="text-center mt-6">
-                        ${isHost 
-                            ? `<button onclick="multiplayerStartGame()" class="btn-primary ${canStart ? '' : 'opacity-50 cursor-not-allowed'}" ${canStart ? '' : 'disabled'}>
-                                    <i class="fa-solid fa-gamepad"></i> ${canStart ? 'Start Game' : 'Waiting for 2 players...'}
-                                </button>`
-                            : `<p class="text-lg text-gray-300">Waiting for the host to start the game...</p>`
-                        }
-                    </div>
-                </div>
-            `;
-        };
-
-        const renderMultiplayerGame = () => {
-            return `
-                <div class="flex flex-col lg:flex-row max-w-full mx-auto space-y-6 lg:space-y-0 lg:space-x-6">
-                    <!-- Game Grid & Status -->
-                    <div class="lg:w-2/3">
-                        <div class="bg-gray-700 p-4 rounded-xl shadow-2xl mb-4 text-center">
-                            <p id="multiplayer-turn-message" class="text-xl font-semibold text-white">
-                                <!-- Turn message updated by listener -->
-                            </p>
-                        </div>
-                        <div id="multiplayer-grid-container" class="max-w-full aspect-square mx-auto bg-gray-700 rounded-xl shadow-2xl p-4">
-                            <!-- Grid rendered by renderMultiplayerPuzzleGrid -->
-                        </div>
-                    </div>
-
-                    <!-- Sidebar: Scores & Chat -->
-                    <div class="lg:w-1/3 flex flex-col space-y-6">
-                        <!-- Scoreboard -->
-                        <div class="bg-gray-700 p-4 rounded-lg shadow-inner">
-                            <h3 class="text-xl font-semibold mb-3 text-white">Scoreboard</h3>
-                            <ul id="multiplayer-player-list">
-                                <!-- Scores dynamically updated by listener -->
-                            </ul>
-                        </div>
-
-                        <!-- Chat Area (reused from lobby) -->
-                        <div class="bg-gray-700 p-4 rounded-lg shadow-inner flex flex-col flex-grow">
-                            <h3 class="text-xl font-semibold mb-3 text-white">Chat</h3>
-                            <div id="multiplayer-chat-messages" class="flex-grow overflow-y-auto mb-3 p-2 bg-gray-800 rounded min-h-32">
-                                <!-- Chat messages dynamically updated by listener -->
-                            </div>
-                            <div class="flex">
-                                <input type="text" id="chat-input" placeholder="Type a message..." class="flex-grow p-2 rounded-l-lg bg-gray-600 text-white placeholder-gray-400 border-transparent focus:ring-primary focus:border-primary border-2">
-                                <button onclick="sendChat()" class="bg-primary text-secondary p-2 rounded-r-lg hover:bg-yellow-400">
-                                    <i class="fa-solid fa-paper-plane"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        };
-
-        const showMessage = (message, type = 'Info') => {
-            const container = document.getElementById('message-container');
-            const alertClasses = {
-                'Info': 'bg-blue-500',
-                'Success': 'bg-green-500',
-                'Warning': 'bg-yellow-500',
-                'Error': 'bg-red-600',
-                'Fatal Error': 'bg-red-800'
-            };
-            
-            const alert = document.createElement('div');
-            alert.className = `p-3 rounded-lg shadow-xl text-white font-semibold mb-2 ${alertClasses[type] || alertClasses['Info']} transition transform translate-x-full opacity-0`;
-            alert.innerHTML = `<strong>${type}:</strong> ${message}`;
-            container.appendChild(alert);
-
-            // Animate in
-            setTimeout(() => {
-                alert.classList.remove('translate-x-full', 'opacity-0');
-                alert.classList.add('translate-x-0', 'opacity-100');
-            }, 10);
-
-            // Animate out and remove
-            setTimeout(() => {
-                alert.classList.remove('translate-x-0', 'opacity-100');
-                alert.classList.add('translate-x-full', 'opacity-0');
-                alert.addEventListener('transitionend', () => alert.remove());
-            }, 5000);
-        };
-
-        const navTo = (page) => {
-            AppState.page = page;
-            renderApp();
-        };
-
-        // =================================================================
-        // Single Player Game Logic
-        // =================================================================
-
-        const generateGameGrid = (size) => {
-            const totalCells = size * size;
-            const numPairs = totalCells / 2;
-            // Use numbers 1-N as card values
-            let values = [];
-            for (let i = 1; i <= numPairs; i++) {
-                values.push(i, i);
-            }
-            // Shuffle (Fisher-Yates)
-            for (let i = values.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [values[i], values[j]] = [values[j], values[i]];
-            }
-            return values.map((value, index) => ({ index, value }));
-        };
-
-        const startGame = () => {
-             // Reset for a fresh start at level 1
-             AppState.singlePlayer.level = 1;
-             AppState.singlePlayer.gridSize = 4;
-             AppState.singlePlayer.score = 0;
-             resetSinglePlayerGame();
-        };
-
-        const resetSinglePlayerGame = () => {
-            const sp = AppState.singlePlayer;
-            sp.puzzleGrid = generateGameGrid(sp.gridSize);
-            sp.flippedCards = [];
-            sp.matchedCards = {};
-            sp.lastFlipTime = 0;
-            
-            // Re-render UI
-            navTo('game');
-            const nextLevelBtn = document.getElementById('next-level-btn');
-            if (nextLevelBtn) {
-                nextLevelBtn.classList.add('opacity-50', 'cursor-not-allowed');
-                nextLevelBtn.disabled = true;
-            }
-        };
-
-        const nextSinglePlayerLevel = () => {
-            const sp = AppState.singlePlayer;
-            sp.level += 1;
-            sp.gridSize = sp.level === 2 ? 6 : sp.level === 3 ? 8 : 4; // Simple level progression
-            resetSinglePlayerGame();
-        };
-
-
-        const handleSinglePlayerClick = (cardIndex) => {
-            const sp = AppState.singlePlayer;
-            
-            // Check if game is waiting for flip-back
-            if (Date.now() - sp.lastFlipTime < 500 && sp.flippedCards.length === 2) {
-                return;
-            }
-
-            // Card is already matched or currently flipped
-            if (sp.matchedCards[cardIndex] || sp.flippedCards.includes(cardIndex)) {
-                return;
-            }
-            
-            // Flip the card
-            sp.flippedCards.push(cardIndex);
-            
-            if (sp.flippedCards.length === 2) {
-                sp.lastFlipTime = Date.now();
-                const [index1, index2] = sp.flippedCards;
-                const value1 = sp.puzzleGrid.find(c => c.index === index1).value;
-                const value2 = sp.puzzleGrid.find(c => c.index === index2).value;
-
-                if (value1 === value2) {
-                    // Match found
-                    sp.matchedCards[index1] = true;
-                    sp.matchedCards[index2] = true;
-                    sp.score += sp.scoreMultiplier;
-                    sp.flippedCards = []; // Clear matched cards immediately
-                    
-                    const nextLevelBtn = document.getElementById('next-level-btn');
-                    if (Object.keys(sp.matchedCards).length === sp.puzzleGrid.length) {
-                        showMessage(`Level ${sp.level} complete! Score: ${sp.score}`, 'Success');
-                        if (nextLevelBtn) {
-                            nextLevelBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                            nextLevelBtn.disabled = false;
-                        }
-                    }
-                } else {
-                    // No match, schedule flip back
-                    setTimeout(() => {
-                        sp.flippedCards = [];
-                        renderPuzzleGrid(sp); // Re-render to flip back
-                    }, 1000); // 1 second visibility
-                }
-            }
-
-            renderPuzzleGrid(sp);
-        };
-
-        const renderPuzzleGrid = (sp) => {
-            const gridContainer = document.getElementById('puzzle-grid-container');
-            if (!gridContainer || sp.puzzleGrid.length === 0) return;
-
-            gridContainer.className = `grid grid-cols-${sp.gridSize} gap-2 p-4`;
-            gridContainer.innerHTML = sp.puzzleGrid.map(card => {
-                const isFlipped = sp.flippedCards.includes(card.index);
-                const isMatched = sp.matchedCards[card.index];
-                const isClickable = !isFlipped && !isMatched && sp.flippedCards.length < 2;
-
-                let content = '';
-                let bgColor = isMatched ? 'bg-green-700' : 'bg-secondary';
-
-                if (isFlipped || isMatched) {
-                    content = `<span class="text-3xl font-extrabold text-white">${card.value}</span>`;
-                    bgColor = isMatched ? 'bg-green-700' : 'bg-gray-600';
-                }
-
-                return `
-                    <div class="card aspect-square rounded-lg shadow-xl flex items-center justify-center cursor-pointer transition-all duration-300 transform hover:scale-105 ${bgColor} ${isClickable ? 'hover:shadow-2xl' : 'opacity-70 cursor-default'}"
-                         onclick="${isClickable ? `handleSinglePlayerClick(${card.index})` : ''}">
-                        ${content}
-                    </div>
-                `;
-            }).join('');
-
-            // Update score display immediately
-            const scoreElement = document.querySelector('.font-mono span:last-child');
-            if (scoreElement) scoreElement.textContent = AppState.singlePlayer.score;
-        };
-
-        // =================================================================
-        // Multiplayer Game Logic (Firestore)
-        // =================================================================
-
+        // UTILITY FUNCTIONS
         const generateRoomCode = () => {
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-            let code = '';
-            for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
-                code += chars.charAt(Math.floor(Math.random() * (chars.length)));
+            const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            let code = "";
+            for (let i = 0; i < 4; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
             }
             return code;
         };
+        
+        function showMessage(msg, title = 'Notification') {
+            const modalHtml = `
+                <div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center transition-opacity duration-300">
+                    <div class="bg-gray-700 p-8 rounded-xl shadow-2xl max-w-sm w-full text-center border-t-4 border-teal-500 transform transition duration-300 scale-100">
+                        <h4 class="text-2xl font-bold text-white mb-3">${title}</h4>
+                        <p class="text-gray-300 mb-6">${msg}</p>
+                        <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                            class="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg font-semibold transition duration-300">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = modalHtml;
+        }
 
-        const createRoom = async () => {
-            if (!AppState.db || !AppState.userId) return showMessage('Application not fully initialized.', 'Error');
+        function showConfetti() {
+            const container = document.getElementById('confetti-container');
+            container.innerHTML = `
+                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 50;">
+                    ${Array.from({ length: 50 }).map(() => {
+                        const size = Math.random() * 8 + 3;
+                        const left = Math.random() * 100;
+                        const animDelay = Math.random() * 2;
+                        const duration = Math.random() * 3 + 2;
+                        const color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                        return `<div class="confetti-piece" style="width: ${size}px; height: ${size}px; left: ${left}vw; background-color: ${color}; animation-delay: ${animDelay}s; animation-duration: ${duration}s;"></div>`;
+                    }).join('')}
+                </div>
+            `;
+            setTimeout(() => { container.innerHTML = ''; }, 3000);
+        }
 
-            // 1. Generate a unique room code
-            let roomCode;
-            let roomExists = true;
+        // --- DATA LAYER (Firestore) ---
+
+        async function initializeProgress() {
+            // Path: artifacts/{appId}/users/{userId}/data/progress
+            const progressRef = doc(db, 'artifacts', AppState.appId, 'users', AppState.userId, 'data', 'progress');
+            
             try {
-                while (roomExists) {
-                    roomCode = generateRoomCode();
-                    const q = query(collection(AppState.db, ROOM_COLLECTION_PATH(AppState.appId)), where('code', '==', roomCode));
-                    const querySnapshot = await getDocs(q);
-                    if (querySnapshot.empty) {
-                        roomExists = false;
-                    }
-                }
-            } catch (error) {
-                console.error("Error generating unique code:", error);
-                return showMessage('Failed to ensure unique room code.', 'Error');
-            }
-
-
-            // 2. Create the room document
-            const newRoomRef = doc(collection(AppState.db, ROOM_COLLECTION_PATH(AppState.appId)));
-            const initialRoomData = {
-                code: roomCode,
-                hostId: AppState.userId,
-                status: 'waiting', 
-                maxPlayers: MAX_PLAYERS,
-                players: {
-                    [AppState.userId]: {
-                        name: AppState.userName,
-                        score: 0,
-                        userId: AppState.userId,
-                        isHost: true
-                    }
-                },
-                gameConfig: { gridSize: 4, level: 1 },
-                turnOrder: [AppState.userId],
-                currentPlayerId: AppState.userId,
-                puzzleGrid: [], 
-                flippedCards: [], 
-                matchedCards: {}, 
-                lastFlipTime: Date.now(),
-                chat: [],
-                createdAt: Date.now()
-            };
-
-            try {
-                await setDoc(newRoomRef, initialRoomData);
-                AppState.roomId = newRoomRef.id;
-                AppState.roomCode = roomCode;
-                AppState.isHost = true;
-                AppState.roomRef = newRoomRef;
-
-                showMessage(`Room created with code: ${roomCode}`, 'Success');
-                navTo('multiplayer-lobby');
-                setupRoomListener(); 
-            } catch (error) {
-                console.error("Error creating room:", error);
-                showMessage('Failed to create room. See console.', 'Error');
-            }
-        };
-
-        const joinRoomByCode = async (code) => {
-            if (!AppState.db || !AppState.userId) return showMessage('Application not fully initialized.', 'Error');
-            if (!code) return showMessage('Room code cannot be empty.', 'Error');
-
-            const roomCode = code.toUpperCase().trim();
-            const roomsCollection = collection(AppState.db, ROOM_COLLECTION_PATH(AppState.appId));
-            const q = query(roomsCollection, where('code', '==', roomCode));
-
-            try {
-                const querySnapshot = await getDocs(q);
-
-                if (querySnapshot.empty) {
-                    return showMessage(`No room found with code: ${roomCode}`, 'Error');
-                }
-
-                const roomDoc = querySnapshot.docs[0];
-                const roomData = roomDoc.data();
-                const roomId = roomDoc.id;
-
-                if (roomData.status !== 'waiting' && !roomData.players[AppState.userId]) {
-                    return showMessage('This game has already started or finished.', 'Error');
-                }
+                const docSnap = await getDoc(progressRef);
                 
-                const currentPlayers = Object.keys(roomData.players || {}).length;
-                if (currentPlayers >= roomData.maxPlayers && !roomData.players[AppState.userId]) {
-                    return showMessage('This room is full.', 'Error');
-                }
-
-                if (roomData.players && roomData.players[AppState.userId]) {
-                    // Player is already in the room, just re-join/navigate
-                    AppState.roomId = roomId;
-                    AppState.roomCode = roomCode;
-                    AppState.isHost = roomData.hostId === AppState.userId;
-                    AppState.roomRef = doc(AppState.db, ROOM_COLLECTION_PATH(AppState.appId), roomId);
-                    navTo(roomData.status === 'in-game' ? 'multiplayer-game' : 'multiplayer-lobby');
-                    setupRoomListener();
-                    showMessage('Welcome back to the room!', 'Info');
-                    return;
-                }
-
-                // Add player to the room using transaction for safety
-                await runTransaction(AppState.db, async (transaction) => {
-                    const freshRoomDoc = await transaction.get(roomDoc.ref);
-                    if (!freshRoomDoc.exists()) throw new Error("Room document does not exist!");
-                    const freshRoomData = freshRoomDoc.data();
-
-                    if (Object.keys(freshRoomData.players || {}).length >= freshRoomData.maxPlayers) {
-                         throw new Error("Room is now full.");
-                    }
-
-                    const newPlayers = {
-                        ...freshRoomData.players,
-                        [AppState.userId]: {
-                            name: AppState.userName,
-                            score: 0,
-                            userId: AppState.userId,
-                            isHost: false
-                        }
-                    };
-                    const newTurnOrder = [...(freshRoomData.turnOrder || []), AppState.userId];
-
-                    transaction.update(roomDoc.ref, {
-                        players: newPlayers,
-                        turnOrder: newTurnOrder,
-                        chat: [...(freshRoomData.chat || []), {
-                            userId: 'system',
-                            userName: 'System',
-                            message: `${AppState.userName} joined the room.`,
-                            timestamp: Date.now()
-                        }]
-                    });
-
-                    AppState.roomId = roomId;
-                    AppState.roomCode = roomCode;
-                    AppState.isHost = false;
-                    AppState.roomRef = roomDoc.ref;
-                    navTo('multiplayer-lobby');
-                    showMessage('Successfully joined room!', 'Success');
-                    setupRoomListener(); 
-                });
-
-            } catch (error) {
-                console.error("Error joining room:", error);
-                showMessage(`Failed to join room: ${error.message || 'Unknown error'}`, 'Error');
-            }
-        };
-
-        const handleJoinForm = (event) => {
-            event.preventDefault();
-            const code = document.getElementById('room-code-input').value;
-            joinRoomByCode(code);
-        };
-
-        const setupRoomListener = () => {
-            if (AppState.unsubscribeRoom) {
-                AppState.unsubscribeRoom(); 
-            }
-            if (!AppState.roomRef) {
-                return;
-            }
-
-            AppState.unsubscribeRoom = onSnapshot(AppState.roomRef, (docSnapshot) => {
-                if (docSnapshot.exists()) {
-                    const roomData = docSnapshot.data();
-                    AppState.currentRoom = roomData;
-                    
-                    // Force a page re-render to update player list, chat, etc.
-                    if (AppState.page.startsWith('multiplayer')) {
-                        renderPage();
-                    }
-
-                    // Handle Game State Navigation
-                    if (roomData.status === 'in-game' && AppState.page !== 'multiplayer-game') {
-                        navTo('multiplayer-game');
-                    } else if (roomData.status === 'waiting' && AppState.page !== 'multiplayer-lobby') {
-                         if (AppState.page === 'multiplayer-game') {
-                            showMessage('Host returned to lobby.', 'Info');
-                         }
-                         navTo('multiplayer-lobby');
-                    }
-                    
-                    if (AppState.page === 'multiplayer-game' && roomData.status === 'in-game') {
-                         renderMultiplayerPuzzleGrid(roomData); // Ensure grid updates
-                    }
-
-
+                if (docSnap.exists()) {
+                    AppState.userProgress = docSnap.data();
                 } else {
-                    // Room deleted or no longer exists
-                    if (AppState.unsubscribeRoom) AppState.unsubscribeRoom();
-                    AppState.unsubscribeRoom = null;
-                    AppState.roomRef = null;
-                    AppState.roomId = null;
-                    AppState.roomCode = null;
-                    AppState.currentRoom = null;
-                    AppState.isHost = false;
-
-                    if (AppState.page.startsWith('multiplayer')) {
-                        showMessage('The room has been closed or you were removed.', 'Info');
-                        navTo('multiplayer-menu');
-                    }
-                }
-            }, (error) => {
-                console.error("Firestore Listener Error:", error);
-                showMessage('Connection to the room lost. Try rejoining.', 'Error');
-            });
-        };
-
-        const leaveRoom = async () => {
-            if (!AppState.roomRef) {
-                navTo('multiplayer-menu');
-                return;
-            }
-
-            try {
-                await runTransaction(AppState.db, async (transaction) => {
-                    const roomDoc = await transaction.get(AppState.roomRef);
-                    if (!roomDoc.exists()) return;
-
-                    const roomData = roomDoc.data();
-                    let players = roomData.players || {};
-                    const playerIds = Object.keys(players);
-
-                    if (playerIds.length === 1 && playerIds[0] === AppState.userId) {
-                        // Last player leaving, delete the room
-                        transaction.delete(AppState.roomRef);
-                    } else if (players[AppState.userId]) {
-                        // Not the last player, remove current user
-                        delete players[AppState.userId];
-
-                        if (AppState.userId === roomData.hostId) {
-                            // Host is leaving, appoint a new host
-                            const newHostId = Object.keys(players)[0];
-                            if (newHostId) {
-                                players[newHostId].isHost = true;
-                                transaction.update(AppState.roomRef, {
-                                    players: players,
-                                    hostId: newHostId,
-                                    chat: [...(roomData.chat || []), {
-                                        userId: 'system',
-                                        userName: 'System',
-                                        message: `${AppState.userName} left. ${players[newHostId].name} is the new host.`,
-                                        timestamp: Date.now()
-                                    }]
-                                });
-                            } else {
-                                transaction.delete(AppState.roomRef); // Safety delete if somehow 0 players remain
+                    // Create new progress structure
+                    AppState.userProgress = {
+                        totalCompleted: 0,
+                        puzzles: PUZZLE_NAMES.reduce((acc, name, index) => {
+                            acc[index] = {
+                                name,
+                                currentStage: 0,
+                                currentLevel: 0,
+                                bestTime: 0,
+                                highScore: 0,
+                                levelsCompleted: 0,
+                                stages: Array(STAGES_PER_PUZZLE).fill(0).map(() => ({
+                                    levels: Array(LEVELS_PER_STAGE).fill(0).map(() => ({ 
+                                        status: 'locked', 
+                                        score: 0, 
+                                        time: 0,
+                                        stars: 0
+                                    }))
+                                }))
+                            };
+                            // Unlock first level of first stage of first puzzle
+                            if (index === 0) {
+                                acc[index].stages[0].levels[0].status = 'unlocked';
                             }
-                        } else {
-                            // Regular player leaving
-                            transaction.update(AppState.roomRef, { 
-                                players: players,
-                                chat: [...(roomData.chat || []), {
-                                    userId: 'system',
-                                    userName: 'System',
-                                    message: `${AppState.userName} left the room.`,
-                                    timestamp: Date.now()
-                                }]
+                            return acc;
+                        }, {}),
+                        achievements: []
+                    };
+                    await saveProgress();
+                }
+            } catch (err) {
+                console.error("Error loading progress:", err);
+                showMessage("Could not load save data. Playing offline mode.", "Sync Error");
+            }
+        }
+
+        async function saveProgress() {
+            if (!AppState.userId || !db) return;
+            const progressRef = doc(db, 'artifacts', AppState.appId, 'users', AppState.userId, 'data', 'progress');
+            await setDoc(progressRef, AppState.userProgress);
+        }
+
+        // --- MULTIPLAYER SERVICE (Firestore) ---
+
+        const MultiplayerService = {
+            async createRoom(mode) {
+                const roomCode = generateRoomCode();
+                // Path: artifacts/{appId}/public/data/rooms/{roomCode}
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', roomCode);
+                
+                const roomData = {
+                    roomCode,
+                    mode,
+                    createdAt: Date.now(),
+                    status: 'waiting',
+                    players: [{ 
+                        id: AppState.userId, 
+                        name: `Player-${AppState.userId.substring(0, 4)}`, 
+                        status: 'ready', 
+                        score: 0 
+                    }],
+                    hostId: AppState.userId,
+                    chat: []
+                };
+
+                await setDoc(roomRef, roomData);
+                return roomData;
+            },
+            
+            async joinRoom(code) {
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
+                
+                try {
+                    await runTransaction(db, async (transaction) => {
+                        const roomDoc = await transaction.get(roomRef);
+                        if (!roomDoc.exists()) throw "ROOM_NOT_FOUND";
+                        
+                        const room = roomDoc.data();
+                        if (room.status !== 'waiting' && !room.players.some(p => p.id === AppState.userId)) {
+                            throw "GAME_IN_PROGRESS";
+                        }
+
+                        // Add player if not present
+                        if (!room.players.some(p => p.id === AppState.userId)) {
+                            if (room.players.length >= 4) throw "ROOM_FULL";
+                            
+                            const newPlayer = {
+                                id: AppState.userId,
+                                name: `Player-${AppState.userId.substring(0, 4)}`,
+                                status: 'ready',
+                                score: 0
+                            };
+                            
+                            // Update players array
+                            const newPlayers = [...room.players, newPlayer];
+                            transaction.update(roomRef, { players: newPlayers });
+                            
+                            // Send system message
+                            const chatMsg = {
+                                senderId: 'SYSTEM',
+                                senderName: 'System',
+                                text: `${newPlayer.name} joined!`,
+                                timestamp: Date.now()
+                            };
+                            transaction.update(roomRef, { 
+                                chat: arrayUnion(chatMsg) 
                             });
                         }
-                    }
-                });
-
-                // Cleanup local state and UI
-                if (AppState.unsubscribeRoom) {
-                    AppState.unsubscribeRoom();
-                    AppState.unsubscribeRoom = null;
-                }
-                AppState.roomRef = null;
-                AppState.roomId = null;
-                AppState.roomCode = null;
-                AppState.currentRoom = null;
-                AppState.isHost = false;
-
-                showMessage('Left the room.', 'Info');
-                navTo('multiplayer-menu');
-            } catch (error) {
-                console.error("Error leaving room:", error);
-                showMessage('Failed to leave room. See console.', 'Error');
-            }
-        };
-
-        const copyRoomCode = () => {
-            const code = AppState.roomCode;
-            if (code) {
-                const tempInput = document.createElement('input');
-                tempInput.value = code;
-                document.body.appendChild(tempInput);
-                tempInput.select();
-                try {
-                    document.execCommand('copy');
-                    showMessage('Room code copied to clipboard!', 'Info');
-                } catch (err) {
-                    showMessage('Could not copy text.', 'Error');
-                }
-                document.body.removeChild(tempInput);
-            }
-        };
-
-        const sendChat = async () => {
-            const chatInput = document.getElementById('chat-input');
-            const message = chatInput.value.trim();
-            if (!message || !AppState.roomRef) return;
-
-            try {
-                await updateDoc(AppState.roomRef, {
-                    chat: [
-                        ...(AppState.currentRoom.chat || []),
-                        {
-                            userId: AppState.userId,
-                            userName: AppState.userName,
-                            message: message,
-                            timestamp: Date.now()
-                        }
-                    ].slice(-100) 
-                });
-                chatInput.value = ''; 
-            } catch (error) {
-                console.error("Error sending chat:", error);
-                showMessage('Failed to send message.', 'Error');
-            }
-        };
-
-        const multiplayerStartGame = async () => {
-            if (!AppState.roomRef || !AppState.isHost) {
-                return showMessage('Only the host can start the game.', 'Error');
-            }
-            if (Object.keys(AppState.currentRoom.players).length < 2) {
-                return showMessage('Need at least 2 players to start.', 'Warning');
-            }
-
-            try {
-                const gridSize = AppState.currentRoom.gameConfig.gridSize;
-                const puzzleGrid = generateGameGrid(gridSize);
-
-                await updateDoc(AppState.roomRef, {
-                    status: 'in-game',
-                    puzzleGrid: puzzleGrid,
-                    flippedCards: [],
-                    matchedCards: {},
-                    lastFlipTime: Date.now(),
-                    currentPlayerId: AppState.currentRoom.turnOrder[0],
-                    // Reset scores
-                    players: Object.fromEntries(
-                        Object.entries(AppState.currentRoom.players).map(([id, player]) => [id, { ...player, score: 0 }])
-                    )
-                });
-                showMessage('Game started!', 'Success');
-            } catch (error) {
-                console.error("Error starting game:", error);
-                showMessage('Failed to start game.', 'Error');
-            }
-        };
-
-        const getNextPlayerId = (roomData) => {
-            const turnOrder = roomData.turnOrder || [];
-            if (turnOrder.length === 0) return null;
-            const currentIndex = turnOrder.indexOf(roomData.currentPlayerId);
-            const nextIndex = (currentIndex + 1) % turnOrder.length;
-            return turnOrder[nextIndex];
-        };
-
-        const handleMultiplayerClick = async (cardIndex) => {
-            if (!AppState.roomRef || AppState.currentRoom.status !== 'in-game') return;
-
-            // Check if it's the current user's turn
-            if (AppState.currentRoom.currentPlayerId !== AppState.userId) {
-                return showMessage("It's not your turn.", 'Warning');
-            }
-
-            const { puzzleGrid, flippedCards, matchedCards } = AppState.currentRoom;
-
-            // Card is already matched or currently flipped
-            if (matchedCards[cardIndex] || flippedCards.includes(cardIndex)) {
-                return;
-            }
-
-            // Use a transaction for the core game logic to ensure atomicity
-            try {
-                await runTransaction(AppState.db, async (transaction) => {
-                    const freshRoomDoc = await transaction.get(AppState.roomRef);
-                    if (!freshRoomDoc.exists()) throw new Error("Room does not exist.");
-                    const freshRoom = freshRoomDoc.data();
-
-                    if (freshRoom.currentPlayerId !== AppState.userId) return; 
-
-                    let newFlippedCards = [...freshRoom.flippedCards, cardIndex];
-                    let newMatchedCards = { ...freshRoom.matchedCards };
-                    let newPlayers = { ...freshRoom.players };
-                    let status = freshRoom.status;
-                    let nextTurn = false;
-                    let currentUserId = AppState.userId; // Player who clicked
-
-                    if (newFlippedCards.length === 2) {
-                        const [index1, index2] = newFlippedCards;
-                        const card1 = freshRoom.puzzleGrid.find(c => c.index === index1);
-                        const card2 = freshRoom.puzzleGrid.find(c => c.index === index2);
-
-                        if (card1.value === card2.value) {
-                            // Match found
-                            newMatchedCards[index1] = true;
-                            newMatchedCards[index2] = true;
-
-                            // Update score
-                            newPlayers[currentUserId].score += 1;
-
-                            // Check for win condition
-                            const allMatched = Object.keys(newMatchedCards).length === freshRoom.puzzleGrid.length;
-                            if (allMatched) {
-                                status = 'finished';
-                            }
-                            newFlippedCards = []; // Clear matched cards immediately
-                            // Player gets another turn
-                        } else {
-                            // No match, prepare to switch turn
-                            nextTurn = true;
-                        }
-                    }
-
-                    // Update the document with new state
-                    const updatePayload = {
-                        flippedCards: newFlippedCards,
-                        matchedCards: newMatchedCards,
-                        players: newPlayers,
-                        status: status,
-                        lastFlipTime: Date.now(),
-                        currentPlayerId: nextTurn ? getNextPlayerId(freshRoom) : freshRoom.currentPlayerId
-                    };
+                    });
                     
-                    transaction.update(AppState.roomRef, updatePayload);
-
-
-                    // If 2 cards are flipped and no match, schedule the card flip-back and turn switch
-                    if (nextTurn) {
-                        setTimeout(async () => {
-                            // Only update flippedCards back to empty after a delay, the turn switch is already committed
-                            try {
-                                 const currentDoc = await getDoc(AppState.roomRef);
-                                 if (currentDoc.exists() && currentDoc.data().flippedCards.length === 2) {
-                                    await updateDoc(AppState.roomRef, { flippedCards: [] });
-                                 }
-                            } catch(e) { /* Listener handles deleted room or error, just fail silently */ }
-
-                        }, 1000); // 1 second visibility
-                    }
-                });
-            } catch (error) {
-                console.error("Transaction failed during card click:", error);
-                showMessage("Failed to register click. Try again.", "Error");
-            }
-        };
-
-        const renderMultiplayerPuzzleGrid = (roomData) => {
-            const gridContainer = document.getElementById('multiplayer-grid-container');
-            const turnMessageElement = document.getElementById('multiplayer-turn-message');
+                    return await this.getRoom(code); // Return fresh data
+                } catch (error) {
+                    return typeof error === 'string' ? error : "JOIN_FAILED";
+                }
+            },
             
-            if (!gridContainer || !roomData.puzzleGrid || roomData.puzzleGrid.length === 0) return;
-
-            const gridSize = roomData.gameConfig.gridSize;
-            const isMyTurn = roomData.currentPlayerId === AppState.userId;
-            const cards = roomData.puzzleGrid;
-            const { flippedCards, matchedCards } = roomData;
-
-            gridContainer.className = `grid grid-cols-${gridSize} gap-2 p-4`;
-            gridContainer.innerHTML = cards.map(card => {
-                const isFlipped = flippedCards.includes(card.index);
-                const isMatched = matchedCards[card.index];
-                const isClickable = !isFlipped && !isMatched && isMyTurn && flippedCards.length < 2;
-
-                let content = '';
-                let bgColor = 'bg-secondary';
-                let cursorStyle = 'cursor-default opacity-70';
-
-                if (isFlipped || isMatched) {
-                    content = `<span class="text-3xl font-extrabold text-white">${card.value}</span>`;
-                    bgColor = isMatched ? 'bg-green-700' : 'bg-gray-600';
-                    cursorStyle = 'cursor-default';
-                }
+            async sendMessage(code, message) {
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
+                const chatMsg = {
+                    senderId: AppState.userId,
+                    senderName: `Player-${AppState.userId.substring(0, 4)}`,
+                    text: message,
+                    timestamp: Date.now()
+                };
+                await updateDoc(roomRef, {
+                    chat: arrayUnion(chatMsg)
+                });
+            },
+            
+            async getActiveRooms() {
+                const roomsRef = collection(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms');
+                // Simple query to get recent/waiting rooms
+                // Note: Firestore requires index for complex sorting, sticking to simple get
+                const q = query(roomsRef, where("status", "==", "waiting")); 
+                const querySnapshot = await getDocs(q);
                 
-                if (isClickable) {
-                    cursorStyle = 'cursor-pointer hover:shadow-2xl';
-                }
-
-                return `
-                    <div class="card aspect-square rounded-lg shadow-xl flex items-center justify-center transition-all duration-300 transform hover:scale-105 ${bgColor} ${cursorStyle}"
-                         onclick="${isClickable ? `handleMultiplayerClick(${card.index})` : ''}">
-                        ${content}
-                    </div>
-                `;
-            }).join('');
-
-            // Update turn message
-            if (turnMessageElement) {
-                const currentPlayerName = roomData.players[roomData.currentPlayerId]?.name || 'Unknown';
-                if (roomData.status === 'finished') {
-                    // Calculate winner
-                    const playerArray = Object.values(roomData.players);
-                    playerArray.sort((a, b) => b.score - a.score); // Sort descending by score
-                    const winner = playerArray[0];
-                    turnMessageElement.innerHTML = `<span class="text-primary font-bold">Game Over! Winner: ${winner.name} with ${winner.score} pairs!</span>`;
-                    return;
-                }
-                if (isMyTurn) {
-                    turnMessageElement.innerHTML = `<span class="text-primary font-bold">Your Turn!</span> Make your move.`;
-                } else {
-                    turnMessageElement.innerHTML = `It's <span class="text-primary font-bold">${currentPlayerName}'s</span> turn.`;
-                }
+                const rooms = [];
+                querySnapshot.forEach((doc) => {
+                    rooms.push(doc.data());
+                });
+                return rooms;
+            },
+            
+            async getRoom(code) {
+                const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', code);
+                const s = await getDoc(roomRef);
+                return s.exists() ? s.data() : null;
             }
         };
 
-        // =================================================================
-        // Initialization
-        // =================================================================
-
-                  const initApp = async () => {
+        // INIT APP
+        async function initApp() {
             try {
-                // Enable debug logging for Firestore/Auth
-                setLogLevel('debug');
+                               // Enable debug logging for Firestore/Auth
 
                 // 1. Load Configs
                 // Place your firebaseConfig object here directly:
@@ -1065,72 +324,683 @@
 
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'puzzle-nexus-default';
                 AppState.appId = appId;
-
-                // 2. Initialize Firebase
+                
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
-                AppState.db = db;
 
-                // 3. Authenticate
-                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
+                // Auth
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
 
-                // Wait for auth state to settle
-                await new Promise(resolve => {
-                    const unsubscribe = onAuthStateChanged(auth, (user) => {
-                        if (user) {
-                            AppState.userId = user.uid;
-                            AppState.userName = `Player-${user.uid.substring(0, 4)}`;
-                            AppState.isAuthReady = true;
-                        }
-                        unsubscribe();
-                        resolve();
-                    });
+                // Wait for User
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        AppState.userId = user.uid;
+                        
+                        // Initialize progress from Firestore
+                        await initializeProgress();
+                        
+                        // Load rooms
+                        AppState.activeRooms = await MultiplayerService.getActiveRooms();
+                        
+                        // Ready to render
+                        AppState.currentPage = 'home';
+                        renderApp();
+                    }
                 });
 
-                // 4. Start App
-                renderApp();
-
             } catch (error) {
-                console.error("Initialization Error:", error);
-                showMessage('Failed to initialize application. Check console for details.', 'Fatal Error');
+                console.error("Init Error", error);
+                document.getElementById('app').innerHTML = `<div class="flex items-center justify-center h-screen text-red-500">Failed to initialize. Check console.</div>`;
+            }
+        }
+
+        // Real-time listener management
+        function setupRoomListener(roomCode) {
+            if (unsubscribeRoomListener) unsubscribeRoomListener();
+            
+            const roomRef = doc(db, 'artifacts', AppState.appId, 'public', 'data', 'rooms', roomCode);
+            
+            unsubscribeRoomListener = onSnapshot(roomRef, (doc) => {
+                if (doc.exists()) {
+                    const roomData = doc.data();
+                    
+                    // Check for new messages/players to notify user?
+                    if (AppState.currentRoom) {
+                         // Simple diff check could go here
+                    }
+
+                    AppState.currentRoom = roomData;
+                    if (AppState.currentPage === 'lobby') {
+                        renderApp();
+                    }
+                } else {
+                    // Room deleted
+                    showMessage("Room closed by host or expired.", "Disconnected");
+                    window.leaveRoom(false); // don't update db, just leave local
+                }
+            }, (error) => {
+                console.error("Room Listen Error:", error);
+            });
+        }
+
+        // RENDER FUNCTIONS
+        function renderHeader() {
+            const pages = [
+                { name: 'Home', key: 'home', icon: 'fa-home' },
+                { name: 'Multiplayer', key: 'lobby', icon: 'fa-globe' },
+                { name: 'Profile', key: 'profile', icon: 'fa-user' },
+            ];
+
+            return `
+                <header class="bg-gray-800 shadow-xl sticky top-0 z-20 border-b border-teal-600/50">
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                        <div class="flex items-center space-x-6">
+                            <button onclick="window.navTo('home')" class="text-2xl sm:text-3xl font-extrabold text-teal-400 hover:text-teal-300 transition duration-300">
+                                PUZZLE NEXUS
+                            </button>
+                            <nav class="hidden md:flex space-x-4">
+                                ${pages.map(page => `
+                                    <button onclick="window.navTo('${page.key}')" 
+                                        class="px-3 py-2 rounded-lg font-medium transition duration-300 flex items-center gap-2 ${AppState.currentPage === page.key ? 'bg-teal-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
+                                        <i class="fa-solid ${page.icon}"></i> ${page.name}
+                                    </button>
+                                `).join('')}
+                            </nav>
+                        </div>
+                        <button onclick="window.resetProgress()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-300 shadow-md">
+                            Reset Data
+                        </button>
+                    </div>
+                </header>
+            `;
+        }
+
+        function renderHome() {
+            if (!AppState.userProgress) return '<div class="p-10 text-center">Loading Data...</div>';
+
+            const nextPuzzleIndex = Object.keys(AppState.userProgress.puzzles).find(i => {
+                const p = AppState.userProgress.puzzles[i];
+                return p.levelsCompleted < STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+            }) || 0;
+
+            const puzzles = Object.values(AppState.userProgress.puzzles).map((puzzle, index) => {
+                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+                const progress = Math.floor((puzzle.levelsCompleted / totalLevels) * 100);
+                const isNext = parseInt(index) === parseInt(nextPuzzleIndex);
+                
+                return `
+                    <div onclick="window.goToStageSelect(${index})" 
+                        class="bg-gray-800 p-5 rounded-xl cursor-pointer transition transform duration-300 hover:scale-[1.03] ${isNext ? 'shadow-lg shadow-teal-400/50 ring-2 ring-teal-400' : 'hover:shadow-lg hover:shadow-gold-500/30'}">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-xl font-extrabold ${isNext ? 'text-teal-400' : 'text-white'}">${puzzle.name}</h3>
+                            <div class="text-xs font-semibold px-2 py-1 rounded-full ${progress === 100 ? 'bg-green-600 text-white' : 'bg-gray-700 text-teal-400'}">
+                                ${progress}%
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-400 mb-4">Stage ${puzzle.currentStage + 1}, Level ${puzzle.currentLevel + 1}</p>
+                        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+                            <div class="h-full ${isNext ? 'bg-teal-500' : 'bg-yellow-500'}" style="width: ${progress}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <h1 class="text-5xl font-extrabold text-white mb-4">Welcome Back!</h1>
+                    <p class="text-lg text-gray-400 mb-10">User ID: <span class="text-sm text-gold-400 bg-gray-700 p-1 rounded-md font-mono">${AppState.userId.substring(0,8)}...</span></p>
+
+                    <section class="mb-12 p-6 bg-gray-800 rounded-xl shadow-lg border border-teal-600/50">
+                        <h2 class="text-3xl font-bold text-yellow-400 mb-4">Quick Actions</h2>
+                        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                            <button onclick="window.goToStageSelect(${nextPuzzleIndex})" class="flex-1 py-3 px-6 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg shadow-lg">
+                                Continue Adventure
+                            </button>
+                            <button onclick="window.navTo('lobby')" class="flex-1 py-3 px-6 bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold rounded-lg shadow-lg">
+                                Multiplayer Lobby
+                            </button>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h2 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-2">All Puzzles</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            ${puzzles}
+                        </div>
+                    </section>
+                </div>
+            `;
+        }
+
+        function renderStageSelect() {
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            
+            const stagesHtml = puzzle.stages.map((stage, index) => {
+                const isUnlocked = index === 0 || puzzle.stages[index-1].levels.some(l => l.status === 'completed');
+                const completedCount = stage.levels.filter(l => l.status === 'completed').length;
+                const progress = Math.floor((completedCount / LEVELS_PER_STAGE) * 100);
+                
+                return `
+                    <div onclick="${isUnlocked ? `window.goToLevelSelect(${index})` : ''}" 
+                        class="p-5 rounded-xl shadow-lg transition transform duration-300 ${isUnlocked ? 'bg-gray-800 cursor-pointer hover:scale-[1.05] hover:shadow-yellow-500/50' : 'bg-gray-900 opacity-50 cursor-not-allowed'}">
+                        <h3 class="text-2xl font-bold text-gold-400 mb-2">Stage ${index + 1}</h3>
+                        <p class="text-sm text-gray-300">${isUnlocked ? 'Unlocked' : 'Locked'}</p>
+                        <div class="mt-3">
+                            <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
+                                <div class="h-full bg-teal-500" style="width: ${progress}%"></div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">${completedCount}/${LEVELS_PER_STAGE} Done</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <button onclick="window.navTo('home')" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Puzzles
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name}</h1>
+                    <p class="text-lg text-gray-400 mb-8">Select a Stage</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6">
+                        ${stagesHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLevelSelect() {
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            const stage = puzzle.stages[AppState.selectedStage];
+
+            const levelsHtml = stage.levels.map((level, index) => {
+                const isUnlocked = level.status === 'unlocked' || level.status === 'completed';
+                const isCompleted = level.status === 'completed';
+                const isLocked = !isUnlocked;
+                
+                let bgClass = isLocked ? 'bg-gray-900/50 cursor-not-allowed' : isCompleted ? 'bg-green-800/50 hover:bg-green-700/70 cursor-pointer' : 'bg-gray-800 hover:bg-gray-700 cursor-pointer';
+                
+                const starCount = level.stars || 0;
+                const starsHtml = Array(3).fill(0).map((_, i) => 
+                    `<span class="text-lg ${i < starCount ? 'text-yellow-400' : 'text-gray-600'}">★</span>`
+                ).join('');
+
+                return `
+                    <div onclick="${isUnlocked ? `window.startPuzzle(${index})` : ''}" 
+                        class="p-3 rounded-xl shadow-lg transition transform duration-300 text-center ${bgClass}">
+                        <div class="text-xl font-bold mb-1 ${isLocked ? 'text-gray-600' : 'text-white'}">Lvl ${index + 1}</div>
+                        ${isCompleted ? `<div class="flex justify-center">${starsHtml}</div>` : 
+                          isLocked ? '<span class="text-red-500 text-3xl">🔒</span>' : 
+                          '<span class="text-teal-400 text-xl font-bold">PLAY</span>'}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+                    <button onclick="window.goToStageSelect(${AppState.selectedPuzzle})" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Back to Stages
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-2">${puzzle.name} - Stage ${AppState.selectedStage + 1}</h1>
+                    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4 mt-8">
+                        ${levelsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPuzzle() {
+            const puzzleName = PUZZLE_NAMES[AppState.selectedPuzzle];
+            const { timer, mistakes, isSolved, matrix } = AppState.puzzleState;
+            
+            let gridHtml = '';
+            if (puzzleName === 'Sequential Memory Matrix') {
+                const { size, sequence, userSequence, display } = matrix;
+                const cells = [];
+                
+                for(let r=0; r<size; r++) {
+                    for(let c=0; c<size; c++) {
+                        const pos = `${r}-${c}`;
+                        const isInSequence = sequence.includes(pos);
+                        const isClicked = userSequence.includes(pos);
+                        
+                        let cellClass = 'w-12 h-12 sm:w-16 sm:h-16 rounded-lg border-2 flex items-center justify-center font-bold text-xl ';
+                        
+                        if (display) {
+                            cellClass += isInSequence ? 'bg-teal-500 border-teal-400' : 'bg-gray-800 border-gray-700';
+                        } else if (isSolved) {
+                            cellClass += isInSequence ? 'bg-green-500 border-green-400' : 'bg-gray-800 border-gray-700';
+                        } else {
+                            cellClass += isClicked ? 'bg-yellow-500 border-yellow-400' : 'bg-gray-800 border-gray-700 hover:bg-gray-600 cursor-pointer';
+                        }
+                        
+                        cells.push(`<div onclick="window.handleGameClick(${r}, ${c})" class="${cellClass}">${isClicked ? '✓' : ''}</div>`);
+                    }
+                }
+                
+                gridHtml = `
+                    <div class="grid gap-2 p-4 rounded-xl bg-gray-700/50 mx-auto w-min" style="grid-template-columns: repeat(${size}, 1fr);">
+                        ${cells.join('')}
+                    </div>
+                `;
+            } else {
+                gridHtml = `
+                    <div class="text-center p-10 bg-gray-800 rounded-xl">
+                        <p class="mb-4">Simulation placeholder for <b>${puzzleName}</b>.</p>
+                        <button onclick="window.solvePuzzleSim()" class="bg-green-600 text-white px-4 py-2 rounded">Simulate Win</button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="max-w-4xl mx-auto px-4 py-10 w-full text-center">
+                    <button onclick="window.exitPuzzle()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                        <i class="fa-solid fa-arrow-left mr-2"></i> Exit Level
+                    </button>
+                    <h1 class="text-4xl font-extrabold text-white mb-6">${puzzleName}</h1>
+                    
+                    <div class="flex justify-between items-center mb-8 p-4 bg-gray-800 rounded-xl shadow-inner max-w-lg mx-auto">
+                        <div class="text-center w-1/3">
+                            <p class="text-xs text-gray-400 uppercase">Time</p>
+                            <p id="timer-display" class="text-3xl font-bold text-white">${timer}s</p>
+                        </div>
+                        <div class="text-center w-1/3 border-l border-r border-gray-700">
+                            <p class="text-xs text-gray-400 uppercase">Mistakes</p>
+                            <p class="text-3xl font-bold text-red-400">${mistakes}</p>
+                        </div>
+                        <div class="text-center w-1/3">
+                            <p class="text-xs text-gray-400 uppercase">Status</p>
+                            <p class="text-xl font-bold ${isSolved ? 'text-green-400' : 'text-teal-400'}">
+                                ${isSolved ? 'SOLVED' : matrix.display ? 'MEMORIZE' : 'PLAY'}
+                            </p>
+                        </div>
+                    </div>
+
+                    ${gridHtml}
+                </div>
+            `;
+        }
+        
+        function renderLobby() {
+            if (AppState.currentRoom) {
+                const r = AppState.currentRoom;
+                return `
+                    <div class="max-w-4xl mx-auto px-4 py-10 w-full">
+                        <button onclick="window.leaveRoom()" class="mb-6 flex items-center text-teal-400 hover:text-teal-300">
+                            <i class="fa-solid fa-arrow-left mr-2"></i> Leave Room
+                        </button>
+                        <div class="flex items-center justify-between mb-2">
+                            <h1 class="text-4xl font-extrabold text-teal-400">Room: ${r.roomCode}</h1>
+                            <button onclick="window.copyRoomCode('${r.roomCode}')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+                                <i class="fa-solid fa-copy"></i> Copy Code
+                            </button>
+                        </div>
+                        <p class="text-gray-400 mb-2">Mode: ${r.mode} | Status: ${r.status}</p>
+                        <p class="text-xs text-teal-400 mb-6 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                            Live Connection
+                        </p>
+
+                        <div class="grid md:grid-cols-2 gap-6">
+                            <div class="bg-gray-800 p-6 rounded-xl">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-4">Players (${r.players.length})</h3>
+                                <div class="space-y-2">
+                                    ${r.players.map(p => `
+                                        <div class="flex items-center p-2 rounded ${p.id === AppState.userId ? 'bg-teal-900/50 ring-1 ring-teal-500' : 'bg-gray-700'}">
+                                            <div class="w-2 h-2 rounded-full mr-2 ${p.status === 'ready' ? 'bg-green-500' : 'bg-red-500'}"></div>
+                                            <span>${p.name}${p.id === AppState.userId ? ' (You)' : ''}</span>
+                                            <span class="ml-auto text-sm text-gray-400">${p.score} pts</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-800 p-6 rounded-xl flex flex-col h-96">
+                                <h3 class="font-bold border-b border-gray-700 pb-2 mb-2">Chat</h3>
+                                <div id="chat-box" class="flex-1 overflow-y-auto mb-2 space-y-2 p-2 bg-gray-900 rounded">
+                                    ${r.chat && r.chat.length === 0 ? '<p class="text-gray-500 text-sm text-center mt-4">No messages yet...</p>' : r.chat.map(msg => `
+                                        <div class="text-sm ${msg.senderId === AppState.userId ? 'text-right' : 'text-left'}">
+                                            <span class="inline-block px-2 py-1 rounded ${msg.senderId === AppState.userId ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}">
+                                                <b>${msg.senderName}:</b> ${msg.text}
+                                            </span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <form onsubmit="window.sendChat(event)" class="flex">
+                                    <input type="text" id="chat-input" class="flex-1 bg-gray-700 border-none rounded-l px-3 py-1 text-white" placeholder="Type a message..." required>
+                                    <button type="submit" class="bg-gold-600 hover:bg-gold-700 px-4 rounded-r font-bold text-gray-900">Send</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="max-w-6xl mx-auto px-4 py-10 w-full">
+                        <h1 class="text-4xl font-extrabold text-white mb-2">Multiplayer Lobby</h1>
+                        <p class="text-sm text-teal-400 mb-6 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                            Cross-device multiplayer enabled
+                        </p>
+                        
+                        <div class="bg-gray-800 p-6 rounded-xl mb-8 border border-gold-600/50 shadow-lg">
+                            <h2 class="text-2xl font-bold text-gold-400 mb-4">Create or Join</h2>
+                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                                <button onclick="window.createRoom('1v1')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 1v1</button>
+                                <button onclick="window.createRoom('2v2')" class="flex-1 py-3 bg-teal-600 hover:bg-teal-700 rounded font-bold">Create 2v2</button>
+                            </div>
+                            <div class="flex gap-2">
+                                <input id="room-code-input" type="text" maxlength="4" placeholder="Enter 4-Letter Code" class="flex-1 bg-gray-700 rounded px-4 py-2 uppercase text-white border border-gray-600 focus:border-gold-400 outline-none">
+                                <button onclick="window.joinRoomByInput()" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold px-6 rounded">Join</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-3">💡 Share the room code with friends on other devices to play together!</p>
+                        </div>
+
+                        <h2 class="text-2xl font-bold mb-4">Active Public Rooms</h2>
+                        <div class="space-y-3">
+                            ${AppState.activeRooms.length === 0 ? '<p class="text-gray-500">No active rooms found. Create one!</p>' : 
+                                AppState.activeRooms.map(r => `
+                                    <div class="flex justify-between items-center p-4 bg-gray-800 rounded hover:bg-gray-700 transition">
+                                        <div>
+                                            <span class="text-teal-400 font-bold text-lg mr-2">${r.roomCode}</span>
+                                            <span class="text-gray-400 text-sm">${r.mode}</span>
+                                            <span class="text-gray-500 text-xs ml-2">(${r.players.length} player${r.players.length > 1 ? 's' : ''})</span>
+                                        </div>
+                                        <button onclick="window.joinRoom('${r.roomCode}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm">Join</button>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        function renderProfile() {
+            if (!AppState.userProgress) return "Loading...";
+            
+            const completed = Object.values(AppState.userProgress.puzzles).filter(p => {
+                const totalLevels = STAGES_PER_PUZZLE * LEVELS_PER_STAGE;
+                return p.levelsCompleted === totalLevels;
+            }).length;
+            
+            return `
+                <div class="max-w-6xl mx-auto px-4 py-10 w-full">
+                    <h1 class="text-4xl font-extrabold text-teal-400 mb-2">Profile</h1>
+                    <p class="text-xl text-gray-400 mb-8">User: <span class="text-gold-400">${AppState.userId}</span></p>
+
+                    <div class="grid md:grid-cols-3 gap-6 mb-8">
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-teal-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Puzzles Mastered</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${completed} / ${TOTAL_PUZZLES}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-yellow-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Total Levels Completed</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.totalCompleted}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-xl border-b-4 border-red-500 shadow-lg">
+                            <p class="text-gray-400 text-sm">Achievements</p>
+                            <p class="text-5xl font-extrabold text-white mt-2">${AppState.userProgress.achievements.length}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderApp() {
+            const app = document.getElementById('app');
+            app.innerHTML = '';
+            
+            app.innerHTML += renderHeader();
+
+            let contentHtml = '';
+            switch(AppState.currentPage) {
+                case 'home': contentHtml = renderHome(); break;
+                case 'stageSelect': contentHtml = renderStageSelect(); break;
+                case 'levelSelect': contentHtml = renderLevelSelect(); break;
+                case 'puzzle': contentHtml = renderPuzzle(); break;
+                case 'lobby': contentHtml = renderLobby(); break;
+                case 'profile': contentHtml = renderProfile(); break;
+                default: contentHtml = renderHome(); break;
+            }
+            
+            const main = document.createElement('main');
+            main.className = 'flex-grow';
+            main.innerHTML = contentHtml;
+            app.appendChild(main);
+            
+            if (AppState.currentPage === 'lobby' && AppState.currentRoom) {
+                const box = document.getElementById('chat-box');
+                if(box) {
+                    // Scroll to bottom smoothly
+                    setTimeout(() => box.scrollTop = box.scrollHeight, 100);
+                }
+            }
+        }
+
+        // ACTION HANDLERS
+        window.navTo = async (page) => { 
+            AppState.currentPage = page; 
+            if (page === 'lobby') {
+                AppState.activeRooms = await MultiplayerService.getActiveRooms();
+            }
+            renderApp(); 
+        };
+        
+        window.goToStageSelect = (puzzleIdx) => { 
+            AppState.selectedPuzzle = puzzleIdx; 
+            AppState.currentPage = 'stageSelect'; 
+            renderApp(); 
+        };
+        
+        window.goToLevelSelect = (stageIdx) => { 
+            AppState.selectedStage = stageIdx; 
+            AppState.currentPage = 'levelSelect'; 
+            renderApp(); 
+        };
+
+        window.resetProgress = async () => {
+            if (confirm('⚠️ This will delete ALL your progress and data. Continue?')) {
+                // To do: delete from Firestore
+                const progressRef = doc(db, 'artifacts', AppState.appId, 'users', AppState.userId, 'data', 'progress');
+                await setDoc(progressRef, { 
+                    totalCompleted: 0,
+                    puzzles: {}, // Needs regeneration
+                    achievements: []
+                }); 
+                location.reload();
             }
         };
 
-        // =================================================================
-        // Global Exposure for HTML Calls
-        // =================================================================
+        // PUZZLE LOGIC
+        window.startPuzzle = (levelIdx) => {
+            const gridSize = 3 + Math.floor(levelIdx / 5);
+            AppState.puzzleState = {
+                timer: 0,
+                mistakes: 0,
+                isSolved: false,
+                currentLevel: levelIdx,
+                matrix: generateMatrix(gridSize),
+                timerInterval: setInterval(() => {
+                    AppState.puzzleState.timer++;
+                    const tEl = document.getElementById('timer-display');
+                    if(tEl) tEl.innerText = AppState.puzzleState.timer + 's';
+                }, 1000)
+            };
+            AppState.currentPage = 'puzzle';
+            renderApp();
+            
+            setTimeout(() => {
+                AppState.puzzleState.matrix.display = false;
+                renderApp();
+            }, 2000);
+        };
 
-        // Initial call to start the application
+        window.exitPuzzle = () => {
+            clearInterval(AppState.puzzleState.timerInterval);
+            AppState.currentPage = 'levelSelect';
+            renderApp();
+        };
+
+        function generateMatrix(size) {
+            const sequence = [];
+            const maxCells = Math.min(8, Math.floor(size * size / 2));
+            while (sequence.length < maxCells) {
+                const r = Math.floor(Math.random() * size);
+                const c = Math.floor(Math.random() * size);
+                const pos = `${r}-${c}`;
+                if (!sequence.includes(pos)) sequence.push(pos);
+            }
+            return { size, sequence, userSequence: [], display: true };
+        }
+
+        window.handleGameClick = (r, c) => {
+            const { isSolved, matrix, currentLevel } = AppState.puzzleState;
+            if (isSolved || matrix.display) return;
+            
+            const pos = `${r}-${c}`;
+            if (matrix.sequence.includes(pos)) {
+                if (!matrix.userSequence.includes(pos)) {
+                    matrix.userSequence.push(pos);
+                    
+                    if (matrix.userSequence.length === matrix.sequence.length) {
+                        completePuzzle();
+                    } else {
+                        renderApp();
+                    }
+                }
+            } else {
+                AppState.puzzleState.mistakes++;
+                showMessage('Wrong tile! Resetting...', 'Oops');
+                AppState.puzzleState.matrix = generateMatrix(matrix.size);
+                AppState.puzzleState.matrix.display = true;
+                renderApp();
+                setTimeout(() => {
+                    AppState.puzzleState.matrix.display = false;
+                    renderApp();
+                }, 2000);
+            }
+        };
+
+        window.solvePuzzleSim = () => {
+            completePuzzle();
+        };
+
+        async function completePuzzle() {
+            AppState.puzzleState.isSolved = true;
+            clearInterval(AppState.puzzleState.timerInterval);
+            showConfetti();
+            
+            const puzzle = AppState.userProgress.puzzles[AppState.selectedPuzzle];
+            const stage = puzzle.stages[AppState.selectedStage];
+            const level = stage.levels[AppState.puzzleState.currentLevel];
+            
+            const time = AppState.puzzleState.timer;
+            const mistakes = AppState.puzzleState.mistakes;
+            const score = Math.max(0, 100 - (time * 0.5) - (mistakes * 10));
+            const stars = mistakes === 0 && time < 30 ? 3 : mistakes < 2 && time < 60 ? 2 : 1;
+            
+            level.status = 'completed';
+            level.score = Math.max(level.score, score);
+            level.time = level.time === 0 ? time : Math.min(level.time, time);
+            level.stars = Math.max(level.stars, stars);
+            
+            if (puzzle.levelsCompleted < (AppState.selectedStage * LEVELS_PER_STAGE + AppState.puzzleState.currentLevel + 1)) {
+                puzzle.levelsCompleted++;
+                AppState.userProgress.totalCompleted++;
+            }
+            
+            const nextLevelIdx = AppState.puzzleState.currentLevel + 1;
+            if (nextLevelIdx < LEVELS_PER_STAGE) {
+                stage.levels[nextLevelIdx].status = 'unlocked';
+            } else {
+                const nextStageIdx = AppState.selectedStage + 1;
+                if (nextStageIdx < STAGES_PER_PUZZLE) {
+                    puzzle.stages[nextStageIdx].levels[0].status = 'unlocked';
+                } else {
+                    const nextPuzzleIdx = AppState.selectedPuzzle + 1;
+                    if (nextPuzzleIdx < TOTAL_PUZZLES) {
+                        AppState.userProgress.puzzles[nextPuzzleIdx].stages[0].levels[0].status = 'unlocked';
+                    }
+                }
+            }
+            
+            await saveProgress();
+            showMessage(`Solved in ${time}s with ${mistakes} mistakes! Score: ${Math.round(score)}`, 'Victory!');
+            renderApp();
+        }
+
+        // MULTIPLAYER HANDLERS
+        window.createRoom = async (mode) => {
+            try {
+                const room = await MultiplayerService.createRoom(mode);
+                AppState.currentRoom = room;
+                setupRoomListener(room.roomCode);
+                AppState.activeRooms = await MultiplayerService.getActiveRooms();
+                showMessage(`Room created! Code: ${room.roomCode}`, '🎮 Room Ready');
+                renderApp();
+            } catch (e) {
+                console.error(e);
+                showMessage("Failed to create room.", "Error");
+            }
+        };
+
+        window.joinRoom = async (code) => {
+            const res = await MultiplayerService.joinRoom(code);
+            if (typeof res === 'string') {
+                showMessage(res.replace(/_/g, ' '), '❌ Error');
+            } else {
+                AppState.currentRoom = res;
+                setupRoomListener(code);
+                showMessage(`Joined room ${code}!`, '✅ Connected');
+                renderApp();
+            }
+        };
+
+        window.joinRoomByInput = async () => {
+            const val = document.getElementById('room-code-input').value.toUpperCase();
+            if(val.length === 4) await window.joinRoom(val);
+        };
+
+        window.leaveRoom = async (updateDb = true) => {
+            if (unsubscribeRoomListener) {
+                unsubscribeRoomListener();
+                unsubscribeRoomListener = null;
+            }
+            
+            // Optional: Remove user from room in DB here if desired, otherwise host handles cleanup logic (omitted for brevity)
+            
+            AppState.currentRoom = null;
+            AppState.activeRooms = await MultiplayerService.getActiveRooms();
+            renderApp();
+        };
+
+        window.copyRoomCode = (code) => {
+            const temp = document.createElement('input');
+            document.body.appendChild(temp);
+            temp.value = code;
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+            showMessage('Room code copied to clipboard!', '📋 Copied');
+        };
+
+        window.sendChat = async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            const msg = input.value;
+            if(msg.trim()) {
+                await MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
+                input.value = '';
+            }
+        };
+
+        // START
         initApp();
-
-        // Expose functions globally for inline HTML calls
-        window.navTo = navTo;
-        window.renderNavBar = renderNavBar;
-        
-        // Multiplayer functions
-        window.createRoom = createRoom;
-        window.joinRoomByCode = joinRoomByCode;
-        window.handleJoinForm = handleJoinForm;
-        window.leaveRoom = leaveRoom;
-        window.copyRoomCode = copyRoomCode;
-        window.sendChat = sendChat;
-        window.multiplayerStartGame = multiplayerStartGame;
-        window.handleMultiplayerClick = handleMultiplayerClick;
-        window.renderMultiplayerPuzzleGrid = renderMultiplayerPuzzleGrid; // Exposed for listener update
-
-        // Single Player functions
-        window.startGame = startGame;
-        window.resetSinglePlayerGame = resetSinglePlayerGame;
-        window.handleSinglePlayerClick = handleSinglePlayerClick;
-        window.nextSinglePlayerLevel = nextSinglePlayerLevel;
-        window.renderPuzzleGrid = renderPuzzleGrid; // Exposed for single player flip-back logic
-
     </script>
 </body>
 </html>
