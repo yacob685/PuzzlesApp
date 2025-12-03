@@ -3,45 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Nexus - Multiplayer Memory</title>
+    <title>Memory Nexus: Advanced Multiplayer Challenge</title>
+    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Load Font Awesome for game icons and UI -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Press+Start+2P&display=swap');
+        
+        /* Custom Styles for the Advanced Game */
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #1f2937, #111827); /* Dark blue-grey gradient */
+            background: linear-gradient(135deg, #1f2937, #111827);
             min-height: 100vh;
+            color: #ffffff;
         }
         .text-gold-400 { color: #FFD700; }
         .bg-gold-600 { background-color: #FFC72C; }
         .hover\:bg-gold-700:hover { background-color: #FFB300; }
-        .shadow-gold-500\/50 { box-shadow: 0 10px 15px -3px rgba(255, 199, 44, 0.5), 0 4px 6px -4px rgba(255, 199, 44, 0.5); }
         
-        .shadow-rainbow {
-            box-shadow: 
-                0 0 10px rgba(0, 255, 255, 0.4),
-                0 0 20px rgba(255, 215, 0, 0.4),
-                0 0 30px rgba(255, 0, 255, 0.4);
-            transition: all 0.3s ease-in-out;
+        /* Game Grid Styling */
+        #game-board {
+            display: grid;
+            /* 6x6 Grid for a challenging game */
+            grid-template-columns: repeat(6, 1fr); 
+            gap: 0.5rem;
+            width: min(95vw, 600px);
+            margin: 0 auto;
         }
-        .card {
-            background-color: #374151; /* Darker card background */
-            transition: transform 0.3s ease, background-color 0.3s ease;
-            transform-style: preserve-3d;
+
+        /* Card Styling */
+        .card-container {
             position: relative;
+            aspect-ratio: 1 / 1;
+            perspective: 1000px;
         }
-        .card-inner {
+
+        .card {
             width: 100%;
             height: 100%;
             transition: transform 0.6s;
             transform-style: preserve-3d;
+            cursor: pointer;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
         }
-        .card.flipped .card-inner {
+
+        .flipped .card {
             transform: rotateY(180deg);
         }
-        .card-face {
+
+        .card-face, .card-back {
             position: absolute;
             width: 100%;
             height: 100%;
@@ -50,884 +63,1118 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2rem;
-            font-weight: bold;
-            color: #1f2937;
+            font-size: 2.5rem;
+            color: white;
+            padding: 0.5rem;
         }
-        .card-back {
-            background-color: #6b7280; /* Grey back */
-            border: 4px solid #4b5563;
-        }
-        .card-front {
-            background-color: #f3f4f6; /* Light front */
+
+        .card-face {
+            background-color: #2563eb; /* Blue for front */
             transform: rotateY(180deg);
         }
-        .card.matched .card-front, .card.matched .card-back {
-            background-color: #10b981; /* Green matched */
-            border-color: #059669;
-            color: white;
-            opacity: 0.5;
-            pointer-events: none;
+
+        .card-back {
+            background: linear-gradient(45deg, #FFD700, #FFB300); /* Gold for back */
+            border: 3px solid #fcd34d;
         }
 
-        /* Responsive Grid */
-        #game-board {
-            display: grid;
-            gap: 1rem;
-            grid-template-columns: repeat(4, 1fr);
-            max-width: 600px;
-            margin: 0 auto;
+        .matched .card-face {
+            background-color: #10b981; /* Green for matched */
+            color: #1f2937;
         }
 
-        /* Mobile specific adjustments */
-        @media (max-width: 640px) {
-            #game-board {
-                gap: 0.5rem;
-                grid-template-columns: repeat(3, 1fr);
-                max-width: 90vw;
-            }
-            .card {
-                aspect-ratio: 1 / 1;
-            }
-            .card-face {
-                font-size: 1.5rem;
-            }
+        .current-turn-glow {
+            box-shadow: 0 0 15px 5px #FFD700, 0 0 10px 2px rgba(255, 255, 255, 0.5);
+            animation: pulse-glow 2s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 10px 2px #FFD700; }
+            100% { box-shadow: 0 0 20px 7px #FFD700; }
+        }
+
+        /* Message Box Styling */
+        #message-box {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            max-width: 300px;
         }
     </style>
 </head>
 <body class="p-4 sm:p-8">
-
-    <div id="app" class="max-w-7xl mx-auto">
-        
+    <div id="app" class="flex flex-col min-h-[90vh]">
         <!-- Header -->
         <header class="text-center mb-8">
-            <h1 class="text-4xl sm:text-5xl font-extrabold text-white mb-2 shadow-rainbow inline-block p-2 rounded-lg">Puzzle Nexus</h1>
-            <p class="text-xl text-gray-400">Multiplayer Memory Game</p>
-            <div id="user-info" class="mt-2 text-sm text-gray-500"></div>
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-gold-400">
+                <i class="fa-solid fa-brain mr-2"></i>Memory Nexus
+            </h1>
+            <p class="text-gray-400 mt-1">Advanced Multiplayer Card Matching Challenge</p>
         </header>
 
-        <!-- Message Box -->
-        <div id="message-box" class="fixed top-0 left-0 right-0 p-4 bg-yellow-500 text-gray-900 text-center font-semibold transition-all duration-300 transform -translate-y-full z-50 rounded-b-lg">
-            <span id="message-title" class="font-bold mr-2"></span><span id="message-text"></span>
-        </div>
-
-        <!-- Main Content Area -->
-        <div id="main-content" class="bg-gray-800 p-6 rounded-xl shadow-2xl transition-all duration-500">
-            
-            <!-- Room Selector/Info Area (Rendered by JS) -->
-            <div id="room-area">
-                <!-- Content will be injected here by renderApp() -->
-            </div>
-
-            <!-- Game and Chat Area (Rendered by JS when connected) -->
-            <div id="game-container" class="mt-6 hidden md:grid md:grid-cols-3 md:gap-6">
-                <div class="md:col-span-2">
-                    <h2 class="text-2xl font-bold text-white mb-4">Game Board</h2>
-                    <div id="game-board-wrapper" class="p-4 bg-gray-700 rounded-lg shadow-inner">
-                        <div id="game-board">
-                            <!-- Cards will be injected here -->
-                        </div>
-                    </div>
-                    <div id="game-status" class="mt-4 p-3 bg-gray-700 text-white rounded-lg text-center font-semibold">
-                        Waiting for game to start...
-                    </div>
-                </div>
-                
-                <!-- Chat & Players Column -->
-                <div class="md:col-span-1 flex flex-col space-y-4">
-                    <!-- Players List -->
-                    <div class="bg-gray-700 p-4 rounded-lg flex-shrink-0">
-                        <h3 class="text-xl font-semibold text-white mb-3">Players <span id="player-count" class="text-gray-400"></span></h3>
-                        <ul id="players-list" class="space-y-2 text-gray-300">
-                            <!-- Player list injected here -->
-                        </ul>
-                    </div>
-
-                    <!-- Chat Box -->
-                    <div class="bg-gray-700 p-4 rounded-lg flex-grow flex flex-col">
-                        <h3 class="text-xl font-semibold text-white mb-3">Chat</h3>
-                        <div id="chat-log" class="flex-grow overflow-y-auto h-40 space-y-2 mb-4 p-2 bg-gray-600 rounded-lg text-sm">
-                            <!-- Chat messages injected here -->
-                        </div>
-                        <form onsubmit="window.sendChat(event)" class="flex">
-                            <input id="chat-input" type="text" placeholder="Type a message..." class="flex-grow p-2 rounded-l-lg bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-400">
-                            <button type="submit" class="bg-gold-600 hover:bg-gold-700 text-gray-900 font-bold p-2 rounded-r-lg transition duration-150">
-                                <i class="fas fa-paper-plane"></i>
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- Room List Modal (Hidden by default) -->
-        <div id="room-list-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 hidden">
-            <div class="bg-gray-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
-                <h2 class="text-2xl font-bold text-white mb-4">Active Rooms</h2>
-                <ul id="active-rooms-list" class="space-y-3 max-h-60 overflow-y-auto pr-2">
-                    <!-- List of rooms injected here -->
-                </ul>
-                <button onclick="document.getElementById('room-list-modal').classList.add('hidden')" class="mt-6 w-full p-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-150">
-                    Close
-                </button>
-            </div>
-        </div>
-
+        <!-- Main Content Area (Rendered by JS) -->
+        <main id="content" class="flex-grow flex flex-col justify-center items-center"></main>
+        
+        <!-- Modal for General Messages -->
+        <div id="message-box"></div>
     </div>
 
+    <!-- Firebase SDKs -->
     <script type="module">
-        // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // --- FIREBASE INITIALIZATION AND AUTHENTICATION ---
-        
-        // Global variables provided by the Canvas environment
-        
-        // Check if the variables exist (they are defined by the Gemini environment)
-        const isCanvasEnvironment = typeof __firebase_config !== 'undefined';
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, serverTimestamp, runTransaction, arrayUnion, setLogLevel, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        let appId;
-        let firebaseConfig;
-        let initialAuthToken;
+        // Global Firebase and App Constants
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyB-3kAk-lMT3jTny2YIs2R1_0mG-tJlmJI",
+            authDomain: "puzzlesapp.firebaseapp.com",
+            projectId: "puzzlesapp",
+            storageBucket: "puzzlesapp.firebasestorage.app",
+            messagingSenderId: "303461259730",
+            appId: "1:303461259730:web:a1790a976b6d58d71dd00b",
+            measurementId: "G-8YEJEBX0NE"
+        };
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : FIREBASE_CONFIG;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        setLogLevel('Debug'); // Enable debug logging for Firestore
 
-        if (isCanvasEnvironment) {
-            // Use the variables provided by the Canvas environment
-            appId = __app_id;
-            firebaseConfig = JSON.parse(__firebase_config);
-            initialAuthToken = __initial_auth_token;
-        } else {
-            // --- FALLBACK FOR STANDALONE / PUBLISHED VERSION ---
-            // If running outside the Gemini environment, Firebase will fail to initialize.
-            // We set placeholders and handle the error gracefully in initApp().
-            // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-            firebaseConfig = {
-              apiKey: "AIzaSyB-3kAk-lMT3jTny2YIs2R1_0mG-tJlmJI",
-              authDomain: "puzzlesapp.firebaseapp.com",
-              projectId: "puzzlesapp",
-              storageBucket: "puzzlesapp.firebasestorage.app",
-              messagingSenderId: "303461259730",
-              appId: "1:303461259730:web:a1790a976b6d58d71dd00b",
-              measurementId: "G-8YEJEBX0NE"
-            };
-            appId = firebaseConfig.projectId; // Use project ID as app ID for fallback collection path
-            initialAuthToken = null;
-        }
-
-        let app;
-        let db;
-        let auth;
+        // --- GLOBAL APP STATE ---
         let userId = null;
+        let isAuthReady = false;
         let unsubscribeRoom = null;
-        let unsubscribeRooms = null;
+        let lastPlayerCount = 0;
         
-        const showMessage = (text, title = 'Notification', duration = 3000) => {
-            const box = document.getElementById('message-box');
-            document.getElementById('message-title').textContent = title;
-            document.getElementById('message-text').textContent = text;
+        const AppState = {
+            view: 'HUB', // 'HUB', 'GAME'
+            currentRoom: null, // Stores the full room object
+            memoryCards: [], // Local state of the card grid
+            // Game State
+            flippedCards: [], // Holds indices of the currently flipped cards (max 2)
+            isProcessingTurn: false, // Flag to prevent rapid clicking while cards are visible
+        };
+
+        // --- ADVANCED GAME CONFIG ---
+        const GRID_SIZE = 6; // 6x6 grid
+        const CARD_COUNT = GRID_SIZE * GRID_SIZE; // 36 cards
+        const MAX_AP_PER_TURN = 2;
+        const MISMATCH_VISIBILITY_TIME = 1500; // 1.5 seconds visibility
+        const SPECIAL_CARD_SYMBOL = '⚡️';
+        const SPECIAL_CARD_TRIGGER_ID = 'special_shuffle_trigger';
+
+        // --- UTILITY FUNCTIONS ---
+
+        /**
+         * Generates a 4-character uppercase room code.
+         * @returns {string}
+         */
+        const generateRoomCode = () => {
+            return Math.random().toString(36).substring(2, 6).toUpperCase();
+        };
+
+        /**
+         * Displays a temporary floating message.
+         * @param {string} message 
+         * @param {string} title 
+         */
+        const showMessage = (message, title = 'Notification', duration = 3000) => {
+            const messageBox = document.getElementById('message-box');
+            const id = 'msg-' + Date.now();
+            const element = document.createElement('div');
+            element.id = id;
+            element.className = 'bg-gray-800 text-white p-4 rounded-lg shadow-xl mb-3 transform transition duration-500 opacity-0 translate-x-full';
+            element.innerHTML = `<p class="font-bold text-sm">${title}</p><p class="text-xs text-gray-300 mt-1">${message}</p>`;
             
-            box.classList.remove('-translate-y-full');
-            box.classList.add('translate-y-0');
-            
+            messageBox.appendChild(element);
+
+            // Animate in
             setTimeout(() => {
-                box.classList.remove('translate-y-0');
-                box.classList.add('-translate-y-full');
+                element.classList.remove('opacity-0', 'translate-x-full');
+                element.classList.add('opacity-100', 'translate-x-0');
+            }, 50); 
+
+            // Animate out and remove
+            setTimeout(() => {
+                element.classList.remove('opacity-100', 'translate-x-0');
+                element.classList.add('opacity-0', 'translate-x-full');
+                setTimeout(() => {
+                    if (messageBox.contains(element)) {
+                        messageBox.removeChild(element);
+                    }
+                }, 500);
             }, duration);
         };
 
-        const initApp = async () => {
-             if (!firebaseConfig) {
-                // This is the error handler for external publishing
-                showMessage('Multiplayer disabled. Missing Firebase configuration.', '🔴 Fatal Error');
-                document.getElementById('room-area').innerHTML = `
-                    <div class="p-6 bg-red-800 text-white rounded-lg">
-                        <h2 class="font-bold text-xl mb-2">Multiplayer Disabled (External Use)</h2>
-                        <p>This application relies on a secured Firebase/Firestore connection that is automatically provided in the Gemini environment.</p>
-                        <p class="mt-2">To run this version outside the environment, you must:</p>
-                        <ol class="list-decimal list-inside mt-2 ml-4">
-                            <li>Create your own Firebase project and Firestore database.</li>
-                            <li>Get your project's configuration object.</li>
-                            <li>Insert your config object in the <code>&lt;script&gt;</code> block where the <code>firebaseConfig = null;</code> fallback is currently located.</li>
-                            <li>Use your own secure authentication method.</li>
-                        </ol>
-                        <p class="mt-3 font-semibold">Current environment does not provide the configuration automatically.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            setLogLevel('Debug'); // Enable logging for debugging
-
-            try {
-                // Handle authentication
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                
-                userId = auth.currentUser?.uid;
-                if (userId) {
-                    document.getElementById('user-info').textContent = `User ID: ${userId}`;
-                    console.log("Authenticated successfully. User ID:", userId);
-                    
-                    // Start listening to the list of active rooms immediately
-                    MultiplayerService.listenToActiveRooms((rooms) => { 
-                        AppState.activeRooms = rooms; 
-                        renderApp(); 
-                    });
-                    renderApp(); // Initial render after auth
-                } else {
-                    throw new Error("User ID is null after sign-in.");
-                }
-
-            } catch (error) {
-                console.error("Authentication failed:", error);
-                showMessage('Authentication failed. Multiplayer disabled.', '❌ Auth Error');
-            }
-        };
-        
-        // --- GAME STATE AND HELPERS ---
-
-        const CARD_ICONS = ['🍎', '🍌', '🍒', '🍇', '🍋', '🥝', '🍉', '🍍', '🍓'];
-        const CARD_COUNT = 18; // 9 pairs
-        const ROOM_COLLECTION = `artifacts/${appId}/public/data/memoryRooms`;
-
-        const AppState = {
-            currentRoom: null,
-            activeRooms: [],
-            gameBoard: [],
-            players: {},
-            currentPlayer: null,
-            isMyTurn: false,
-            waitingForPair: false,
-            currentFlippedCards: [],
-        };
-        
-        let lastPlayerCount = 0; // Used for change detection in onSnapshot
-
-        const getPlayerColor = (id) => {
-            const colors = ['text-blue-400', 'text-red-400', 'text-green-400', 'text-yellow-400', 'text-purple-400', 'text-pink-400'];
-            // Simple hash function to assign color based on UID
-            let hash = 0;
-            for (let i = 0; i < id.length; i++) {
-                hash = id.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            return colors[Math.abs(hash) % colors.length];
-        };
-
-        const generateBoard = () => {
-            let icons = [...CARD_ICONS].slice(0, CARD_COUNT / 2);
-            icons = icons.flatMap(icon => [icon, icon]);
-            
-            // Fisher-Yates shuffle
-            for (let i = icons.length - 1; i > 0; i--) {
+        /**
+         * Shuffles an array (Fisher-Yates algorithm).
+         * @param {Array} array 
+         * @returns {Array}
+         */
+        const shuffleArray = (array) => {
+            for (let i = array.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
-                [icons[i], icons[j]] = [icons[j], icons[i]];
+                [array[i], array[j]] = [array[j], array[i]];
             }
+            return array;
+        };
+        
+        // --- GAME LOGIC & CARD GENERATION ---
 
-            return icons.map((icon, index) => ({
+        /**
+         * Generates the initial, complex set of cards for the 6x6 grid.
+         * Includes a special action card.
+         * @returns {Array<Object>}
+         */
+        const generateCards = () => {
+            const symbols = [
+                '🚀', '💡', '🔥', '💎', '🔑', '🌍', '🌌', '💰',
+                '🛡️', '⚙️', '🔮', '🦠', '🧱', '🌲', '🔔', '🌙',
+                '⏳', '⚖️'
+            ];
+            
+            // Need 18 pairs for 36 cards.
+            // 17 regular pairs (34 cards) + 2 special cards (1 pair) = 36 cards.
+            const cardValues = symbols.slice(0, 17)
+                .flatMap(s => [s, s]); // 34 cards (17 pairs)
+            
+            // Add the special card pair
+            cardValues.push(SPECIAL_CARD_SYMBOL, SPECIAL_CARD_SYMBOL); // 36 cards (18 pairs total)
+
+            const shuffledValues = shuffleArray(cardValues);
+
+            return shuffledValues.map((value, index) => ({
                 id: index,
-                icon: icon,
+                value: value,
                 isFlipped: false,
                 isMatched: false,
+                // Assign a unique type for the special card to handle its logic
+                type: value === SPECIAL_CARD_SYMBOL ? SPECIAL_CARD_TRIGGER_ID : 'regular',
+                matchedBy: null,
             }));
         };
 
+        /**
+         * Calculates the new Action Points for a player after a turn.
+         * @param {Object} playerState The player's current state.
+         * @param {boolean} isMatch Whether the last move was a successful match.
+         * @returns {number} The new AP value.
+         */
+        const calculateNewAP = (playerState, isMatch) => {
+            // Start with current AP - 1 (for flipping the second card)
+            let newAP = playerState.actionPoints - 1;
+            
+            // Bonus AP for a match
+            if (isMatch) {
+                newAP += 2; // +1 to offset the cost, +1 for the match bonus
+            }
 
-        // --- FIREBASE SERVICE IMPLEMENTATION ---
+            // Cap AP at MAX_AP_PER_TURN at the start of the next turn cycle
+            return Math.min(newAP, MAX_AP_PER_TURN);
+        };
+        
+        // --- FIREBASE SERVICE ---
 
         const MultiplayerService = {
-            async getActiveRooms() {
-                if (!db) return [];
-                try {
-                    const q = query(collection(db, ROOM_COLLECTION));
-                    const snapshot = await getDocs(q);
-                    return snapshot.docs.map(doc => ({ roomCode: doc.id, ...doc.data() }));
-                } catch (e) {
-                    console.error("Error getting active rooms: ", e);
-                    return [];
-                }
-            },
-
-            async createRoom() {
-                if (!db || !userId) throw new Error("Database or User ID not initialized.");
-                const roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
-                const board = generateBoard();
+            getRoomRef: (roomCode) => doc(db, `/artifacts/${appId}/public/data/rooms`, roomCode),
+            
+            /**
+             * Attempts to create a new room.
+             * @returns {Promise<string>} The new room code.
+             */
+            createRoom: async () => {
+                const roomCode = generateRoomCode();
+                const cards = generateCards();
                 
-                const roomData = {
-                    status: 'waiting', // waiting, playing, finished
-                    currentPlayerId: userId,
-                    players: [{ id: userId, score: 0, color: getPlayerColor(userId) }],
-                    board: JSON.stringify(board), // Serialize board
-                    chat: [{ sender: 'SYSTEM', message: `${userId} created the room.`, timestamp: Date.now() }],
-                    flippedCards: [],
-                    matchRequests: [], // For handling concurrent flips
-                    createdAt: Date.now(),
+                const newRoom = {
+                    roomCode: roomCode,
+                    createdAt: serverTimestamp(),
+                    status: 'LOBBY', // LOBBY, IN_GAME, FINISHED
+                    hostId: userId,
+                    players: { 
+                        [userId]: { id: userId, score: 0, actionPoints: MAX_AP_PER_TURN, turnOrder: 0, lastActivity: serverTimestamp(), frozenUntil: 0 }
+                    },
+                    currentTurn: userId,
+                    board: JSON.stringify(cards), // Store board as JSON string
+                    flippedCards: [], // [cardIndex1, cardIndex2]
+                    lastFlipTime: 0,
+                    chat: [],
                 };
-                
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-                await setDoc(roomRef, roomData);
-                return { roomCode, ...roomData };
+
+                try {
+                    await setDoc(MultiplayerService.getRoomRef(roomCode), newRoom);
+                    return roomCode;
+                } catch (error) {
+                    console.error("Error creating room:", error);
+                    showMessage("Failed to create room.", '❌ Error');
+                    throw error;
+                }
             },
 
-            async joinRoom(roomCode) {
-                if (!db || !userId) throw new Error("Database or User ID not initialized.");
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-
-                const roomSnap = await getDoc(roomRef);
-                if (!roomSnap.exists()) {
-                     throw new Error(`Room ${roomCode} does not exist.`);
-                }
-                const roomData = roomSnap.data();
-                
-                // Only add player if they are not already in the list
-                const isAlreadyJoined = roomData.players.some(p => p.id === userId);
-                if (!isAlreadyJoined) {
-                    await updateDoc(roomRef, {
-                        players: [...(roomData.players || []), { id: userId, score: 0, color: getPlayerColor(userId) }]
+            /**
+             * Updates the room state in the database using a transaction for safety.
+             * @param {string} roomCode 
+             * @param {function(Object): Object} updateFn 
+             */
+            updateRoomTransaction: async (roomCode, updateFn) => {
+                const roomRef = MultiplayerService.getRoomRef(roomCode);
+                try {
+                    await runTransaction(db, async (transaction) => {
+                        const roomDoc = await transaction.get(roomRef);
+                        if (!roomDoc.exists()) {
+                            throw "Room does not exist!";
+                        }
+                        const currentData = roomDoc.data();
+                        const newData = updateFn(currentData);
+                        transaction.update(roomRef, newData);
                     });
-                    await this.sendMessage(roomCode, `${userId} joined the room.`, 'SYSTEM');
+                } catch (e) {
+                    console.error("Transaction failed: ", e);
+                    showMessage(`Transaction failed: ${e.message || e}`, '⚠️ DB Error', 5000);
+                    // Critical: if the error indicates a race condition, try to re-render the current state
+                    if (e.message && e.message.includes("contention")) {
+                         showMessage("Game state conflict detected. Re-syncing...", '🔄 Syncing');
+                         // Force a full re-render on transaction failure
+                         renderApp();
+                    }
                 }
             },
-
-            async getRoom(roomCode) {
-                if (!db) return null;
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-                const docSnap = await getDoc(roomRef);
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    // Deserialize board
-                    try {
-                       data.board = JSON.parse(data.board);
-                    } catch (e) {
-                       console.error("Failed to parse board data:", e);
-                       data.board = [];
-                    }
-                    return { roomCode: docSnap.id, ...data };
-                }
-                return null;
-            },
-
-            async flipCard(roomCode, cardIndex) {
-                if (!db || !userId) throw new Error("Database or User ID not initialized.");
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-
-                // Add a flip request to the queue
-                await updateDoc(roomRef, {
-                    matchRequests: [
-                        ...(AppState.currentRoom?.matchRequests || []),
-                        { playerId: userId, cardIndex: cardIndex, timestamp: Date.now() }
-                    ]
-                });
-            },
-
-            async sendMessage(roomCode, message, sender = userId) {
-                if (!db) return;
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-                await updateDoc(roomRef, {
-                    chat: [...(AppState.currentRoom?.chat || []), { sender, message, timestamp: Date.now() }]
-                });
-            },
             
-            // This is crucial: handles the real-time updates for a single room
-            listenToRoom(roomCode, callback) {
-                if (!db) return () => {};
-                const roomRef = doc(db, ROOM_COLLECTION, roomCode);
-                // Clear existing listener if any
-                if (unsubscribeRoom) { unsubscribeRoom(); unsubscribeRoom = null; } 
+            /**
+             * Joins an existing room.
+             * @param {string} roomCode 
+             */
+            joinRoom: async (roomCode) => {
+                const roomRef = MultiplayerService.getRoomRef(roomCode);
                 
-                unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        // Deserialize board before passing to callback
-                        try {
-                           data.board = JSON.parse(data.board);
-                        } catch (e) {
-                           console.error("Failed to parse board data:", e);
-                           data.board = [];
-                        }
-                        callback({ roomCode: docSnap.id, ...data });
-                    } else {
-                        callback(null);
-                        showMessage("Room was deleted or closed.", "❌ Disconnected");
-                        window.leaveRoom();
-                    }
-                }, (error) => {
-                    console.error("Error listening to room: ", error);
-                    showMessage("Lost connection to room.", "⚠️ Connection Error");
-                });
-                return unsubscribeRoom;
-            },
-
-            listenToActiveRooms(callback) {
-                if (!db) return () => {};
-                const q = query(collection(db, ROOM_COLLECTION));
-                // Clear existing listener if any
-                if (unsubscribeRooms) { unsubscribeRooms(); unsubscribeRooms = null; }
-
-                unsubscribeRooms = onSnapshot(q, (snapshot) => {
-                    const rooms = snapshot.docs.map(doc => ({ roomCode: doc.id, ...doc.data() }));
-                    callback(rooms);
-                }, (error) => {
-                    console.error("Error listening to rooms: ", error);
-                });
-                return unsubscribeRooms;
-            }
-        };
-
-
-        // --- GAME LOGIC (RUNS ON STATE UPDATE) ---
-
-        const processMatchRequests = (room) => {
-            if (room.matchRequests.length === 0) return null; // No updates needed
-            
-            let newRoom = { ...room };
-            let newBoard = [...room.board];
-            let newPlayers = [...room.players];
-            let newFlippedCards = [...room.flippedCards];
-            let nextPlayerId = room.currentPlayerId;
-            let chatUpdate = [];
-
-            // Only process the oldest request
-            const request = newRoom.matchRequests[0];
-            const cardIndex = request.cardIndex;
-            const flipperId = request.playerId;
-
-            const isTurn = flipperId === newRoom.currentPlayerId;
-            const card = newBoard[cardIndex];
-            
-            const isAlreadyFlipped = newFlippedCards.some(f => f.id === card.id);
-            
-            if (card.isMatched || isAlreadyFlipped) {
-                // Invalid flip, just remove the request
-            } else if (isTurn && newFlippedCards.length < 2) {
-                
-                // Flip the card
-                newBoard[cardIndex] = { ...card, isFlipped: true };
-                newFlippedCards.push(newBoard[cardIndex]);
-
-                if (newFlippedCards.length === 2) {
-                    const [card1, card2] = newFlippedCards;
+                await MultiplayerService.updateRoomTransaction(roomCode, (currentData) => {
+                    if (!currentData) throw new Error("Room not found.");
                     
-                    if (card1.icon === card2.icon) {
-                        // MATCH!
-                        newBoard[card1.id] = { ...newBoard[card1.id], isMatched: true, isFlipped: true };
-                        newBoard[card2.id] = { ...newBoard[card2.id], isMatched: true, isFlipped: true };
-                        
-                        newPlayers = newPlayers.map(p => 
-                            p.id === flipperId ? { ...p, score: p.score + 1 } : p
-                        );
-                        chatUpdate.push({ sender: 'SYSTEM', message: `${flipperId} scored a match! They get another turn.`, timestamp: Date.now() });
-                        
-                        newFlippedCards = []; // Clear for next pair
-                        
-                        // Check for win condition
-                        if (newBoard.every(c => c.isMatched)) {
-                            newRoom.status = 'finished';
-                            chatUpdate.push({ sender: 'SYSTEM', message: `Game Over!`, timestamp: Date.now() });
-                        }
+                    if (!currentData.players[userId]) {
+                        const numPlayers = Object.keys(currentData.players).length;
+                        currentData.players[userId] = {
+                            id: userId,
+                            score: 0,
+                            actionPoints: MAX_AP_PER_TURN,
+                            turnOrder: numPlayers,
+                            lastActivity: serverTimestamp(),
+                            frozenUntil: 0,
+                        };
+                        currentData.chat.push({
+                            sender: 'SYSTEM',
+                            message: `Player ${userId.substring(0, 4)} joined the room.`,
+                            timestamp: serverTimestamp(),
+                        });
+                    }
+                    return currentData;
+                });
+            },
 
-                    } else {
-                        // NO MATCH.
+            /**
+             * Leaves the room and removes the player.
+             * @param {string} roomCode 
+             */
+            leaveRoom: async (roomCode) => {
+                if (unsubscribeRoom) { unsubscribeRoom(); unsubscribeRoom = null; }
+                
+                await MultiplayerService.updateRoomTransaction(roomCode, (currentData) => {
+                    if (currentData.players[userId]) {
+                        delete currentData.players[userId];
+                        currentData.chat.push({
+                            sender: 'SYSTEM',
+                            message: `Player ${userId.substring(0, 4)} left the room.`,
+                            timestamp: serverTimestamp(),
+                        });
+
+                        // If the leaving player was the host, assign a new host
+                        if (currentData.hostId === userId) {
+                            const remainingPlayers = Object.keys(currentData.players);
+                            if (remainingPlayers.length > 0) {
+                                currentData.hostId = remainingPlayers[0];
+                            }
+                        }
+                        
+                        // If the leaving player was the current turn, advance the turn
+                        if (currentData.currentTurn === userId && Object.keys(currentData.players).length > 0) {
+                            currentData.currentTurn = MultiplayerService.getNextPlayerId(currentData);
+                        }
+                    }
+                    return currentData;
+                });
+            },
+            
+            /**
+             * Gets the ID of the next player in the turn order.
+             * @param {Object} roomData 
+             * @returns {string} The next player ID.
+             */
+            getNextPlayerId: (roomData) => {
+                const playerIds = Object.keys(roomData.players)
+                    .sort((a, b) => roomData.players[a].turnOrder - roomData.players[b].turnOrder);
+                
+                const currentIndex = playerIds.indexOf(roomData.currentTurn);
+                const nextIndex = (currentIndex + 1) % playerIds.length;
+                return playerIds[nextIndex];
+            },
+            
+            /**
+             * Handles a card flip action, which is the core game move.
+             * This function is run inside a transaction.
+             * @param {number} cardIndex 
+             */
+            flipCard: async (cardIndex) => {
+                const roomCode = AppState.currentRoom.roomCode;
+
+                await MultiplayerService.updateRoomTransaction(roomCode, (roomData) => {
+                    const cards = JSON.parse(roomData.board);
+                    const playerState = roomData.players[userId];
+                    
+                    // 1. Pre-Check: Is it the player's turn, not processing, card not matched/flipped?
+                    if (roomData.currentTurn !== userId) {
+                        throw new Error("It's not your turn.");
+                    }
+                    if (roomData.flippedCards.length >= 2) {
+                        throw new Error("Two cards are already flipped. Wait for the game to reset them.");
+                    }
+                    if (cards[cardIndex].isMatched || cards[cardIndex].isFlipped) {
+                        throw new Error("Card already revealed or matched.");
+                    }
+                    if (playerState.actionPoints < 1) {
+                         throw new Error("Not enough Action Points to flip a card.");
+                    }
+
+                    // 2. State Update: Flip the card and consume 1 AP
+                    cards[cardIndex].isFlipped = true;
+                    roomData.flippedCards.push(cardIndex);
+                    playerState.actionPoints -= 1; // Consume 1 AP
+
+                    roomData.board = JSON.stringify(cards);
+                    
+                    const newFlipped = roomData.flippedCards;
+
+                    if (newFlipped.length === 2) {
+                        // This is the second flip, check for match
+                        const card1 = cards[newFlipped[0]];
+                        const card2 = cards[newFlipped[1]];
+                        
+                        // 3. Match Check Logic
+                        if (card1.value === card2.value) {
+                            // MATCH FOUND!
+                            card1.isMatched = true;
+                            card2.isMatched = true;
+                            card1.isFlipped = true; // Keep flipped and matched
+                            card2.isFlipped = true; // Keep flipped and matched
+                            card1.matchedBy = userId;
+                            card2.matchedBy = userId;
+                            
+                            playerState.score += 1;
+                            playerState.actionPoints = calculateNewAP(playerState, true); // Award bonus AP
+                            
+                            roomData.board = JSON.stringify(cards);
+                            roomData.flippedCards = []; // Clear flipped cards immediately on match
+                            roomData.lastFlipTime = serverTimestamp();
+
+                            // Special Card Logic: If the match included the special card
+                            if (card1.type === SPECIAL_CARD_TRIGGER_ID || card2.type === SPECIAL_CARD_TRIGGER_ID) {
+                                // Apply the special effect: Shuffle the entire board and reset AP for one player
+                                const { newBoard, shuffledPlayerId } = MultiplayerService.applySpecialEffect(roomData, userId);
+                                roomData.board = JSON.stringify(newBoard);
+                                roomData.chat.push({
+                                    sender: 'SYSTEM',
+                                    message: `⚡️ SPECIAL CARD ACTIVATED! Board shuffled! Player ${shuffledPlayerId.substring(0, 4)} had their AP frozen for 1 turn.`,
+                                    timestamp: serverTimestamp(),
+                                });
+                            }
+                            
+                            // Check for Game Over (All cards matched)
+                            const matchedCount = cards.filter(c => c.isMatched).length;
+                            if (matchedCount === CARD_COUNT) {
+                                roomData.status = 'FINISHED';
+                                roomData.chat.push({
+                                    sender: 'SYSTEM',
+                                    message: `🏆 GAME OVER! All pairs found. Calculating scores...`,
+                                    timestamp: serverTimestamp(),
+                                });
+                            } else {
+                                // Player gets to go again (turn remains the same)
+                                roomData.chat.push({
+                                    sender: 'SYSTEM',
+                                    message: `MATCH! ${userId.substring(0, 4)} gets another turn and bonus AP!`,
+                                    timestamp: serverTimestamp(),
+                                });
+                            }
+
+                        } else {
+                            // NO MATCH: Prepare for turn change and card flip back
+                            roomData.lastFlipTime = serverTimestamp(); // Mark time for auto-flip
+                            // Turn change is handled in the listener after the auto-flip
+                        }
+                    } else if (newFlipped.length === 1) {
+                         // First flip is just a state update, turn remains the same
+                    }
+                    
+                    return roomData;
+                });
+            },
+
+            /**
+             * Advanced Game Mechanic: Applies the special card effect.
+             * @param {Object} roomData 
+             * @param {string} triggerUserId The ID of the player who triggered the effect.
+             */
+            applySpecialEffect: (roomData, triggerUserId) => {
+                // 1. Shuffle the board
+                const currentCards = JSON.parse(roomData.board);
+                const matchedCards = currentCards.filter(c => c.isMatched);
+                const unmatchedCards = currentCards.filter(c => !c.isMatched);
+
+                // Preserve the state of matched cards, only shuffle the unmatched ones
+                const unmatchedValues = unmatchedCards.map(c => c.value);
+                const shuffledValues = shuffleArray(unmatchedValues);
+
+                const newUnmatchedCards = unmatchedCards.map((card, index) => ({
+                    ...card,
+                    value: shuffledValues[index], // Assign new value from shuffled list
+                    isFlipped: false, // Ensure they are face-down after shuffle
+                }));
+                
+                // Combine and re-index the full board (order doesn't matter for logic, only for display)
+                const newBoard = shuffleArray([...matchedCards, ...newUnmatchedCards]).map((card, index) => ({
+                    ...card,
+                    id: index // Re-index everything
+                }));
+                
+                // 2. Freeze a random opponent's AP for one turn
+                const otherPlayerIds = Object.keys(roomData.players).filter(id => id !== triggerUserId);
+                let shuffledPlayerId = triggerUserId; // Default to self if no other players
+                
+                if (otherPlayerIds.length > 0) {
+                    shuffledPlayerId = otherPlayerIds[Math.floor(Math.random() * otherPlayerIds.length)];
+                    roomData.players[shuffledPlayerId].frozenUntil = Date.now() + 60000; // Freeze for 60 seconds (enough for a couple of turns)
+                    roomData.players[shuffledPlayerId].actionPoints = 0;
+                }
+
+                return { newBoard, shuffledPlayerId };
+            },
+            
+            /**
+             * Force-updates the board state (e.g., flipping cards back, changing turn).
+             * @param {string} roomCode 
+             */
+            finalizeTurn: async (roomCode) => {
+                 await MultiplayerService.updateRoomTransaction(roomCode, (roomData) => {
+                    if (roomData.flippedCards.length === 2) {
+                        const cards = JSON.parse(roomData.board);
+                        const [idx1, idx2] = roomData.flippedCards;
+                        
+                        // Flip cards back (only unmatched ones)
+                        if (!cards[idx1].isMatched) cards[idx1].isFlipped = false;
+                        if (!cards[idx2].isMatched) cards[idx2].isFlipped = false;
+                        
+                        // Reset flipped state in room
+                        roomData.flippedCards = [];
+                        roomData.board = JSON.stringify(cards);
                         
                         // Change turn
-                        const currentPlayerIndex = newPlayers.findIndex(p => p.id === flipperId);
-                        const nextIndex = (currentPlayerIndex + 1) % newPlayers.length;
-                        nextPlayerId = newPlayers[nextIndex].id;
+                        const currentPlayerId = roomData.currentTurn;
+                        const nextPlayerId = MultiplayerService.getNextPlayerId(roomData);
+                        roomData.currentTurn = nextPlayerId;
                         
-                        // Flip cards back immediately in state. The UI will handle the visual delay.
-                        newBoard[card1.id] = { ...newBoard[card1.id], isFlipped: false };
-                        newBoard[card2.id] = { ...newBoard[card2.id], isFlipped: false };
-
-                        chatUpdate.push({ sender: 'SYSTEM', message: `${flipperId} missed. It is now ${nextPlayerId}'s turn.`, timestamp: Date.now() });
-                        newFlippedCards = []; // Clear for next player
+                        // Refill AP for the new player, considering freeze state
+                        const nextPlayerState = roomData.players[nextPlayerId];
+                        
+                        if (Date.now() < nextPlayerState.frozenUntil) {
+                            nextPlayerState.actionPoints = 0;
+                            roomData.chat.push({
+                                sender: 'SYSTEM',
+                                message: `🧊 Player ${nextPlayerId.substring(0, 4)} is FROZEN and loses their turn!`,
+                                timestamp: serverTimestamp(),
+                            });
+                            // Immediately advance turn again if frozen
+                            const nextNextPlayerId = MultiplayerService.getNextPlayerId(roomData);
+                            roomData.currentTurn = nextNextPlayerId;
+                            roomData.players[nextNextPlayerId].actionPoints = MAX_AP_PER_TURN;
+                        } else {
+                            nextPlayerState.actionPoints = MAX_AP_PER_TURN;
+                            nextPlayerState.frozenUntil = 0; // Clear freeze if expired
+                        }
+                        
+                        roomData.players[nextPlayerId] = nextPlayerState;
+                        
+                        roomData.chat.push({
+                            sender: 'SYSTEM',
+                            message: `Turn passes to ${roomData.currentTurn.substring(0, 4)}.`,
+                            timestamp: serverTimestamp(),
+                        });
                     }
+                    return roomData;
+                });
+            },
+
+            /**
+             * Sends a chat message to the room.
+             * @param {string} roomCode 
+             * @param {string} message 
+             */
+            sendMessage: async (roomCode, message) => {
+                const roomRef = MultiplayerService.getRoomRef(roomCode);
+                const chatMessage = {
+                    sender: userId,
+                    message: message,
+                    timestamp: serverTimestamp(),
+                };
+                try {
+                    await updateDoc(roomRef, {
+                        chat: arrayUnion(chatMessage)
+                    });
+                } catch (error) {
+                    console.error("Error sending message:", error);
                 }
-            }
+            },
             
-            // 2. Prepare the update document
-            const updateData = {
-                board: JSON.stringify(newBoard),
-                players: newPlayers,
-                currentPlayerId: nextPlayerId,
-                flippedCards: newFlippedCards,
-                // Crucially, remove the request we just processed
-                matchRequests: newRoom.matchRequests.slice(1)
-            };
-            
-            if(newRoom.status === 'finished') {
-                 updateData.status = 'finished';
-            }
-            
-            if(chatUpdate.length > 0) {
-                updateData.chat = [...room.chat, ...chatUpdate];
-            }
-            
-            return updateData;
+            /**
+             * Sets up a real-time listener for the room state.
+             * @param {string} roomCode 
+             * @param {function(Object): void} callback 
+             * @returns {function(): void} Unsubscribe function.
+             */
+            listenToRoom: (roomCode, callback) => {
+                const roomRef = MultiplayerService.getRoomRef(roomCode);
+                return onSnapshot(roomRef, (docSnapshot) => {
+                    if (docSnapshot.exists()) {
+                        const roomData = docSnapshot.data();
+                        
+                        // Critical: Handle the auto-flip and turn change after a mismatch
+                        if (roomData.flippedCards.length === 2) {
+                            // Check if enough time has passed since the second card was flipped (lastFlipTime)
+                            // Firestore timestamps need to be converted to JS Date objects
+                            const lastFlipMs = roomData.lastFlipTime?.toDate()?.getTime() || Date.now();
+                            if (Date.now() - lastFlipMs > MISMATCH_VISIBILITY_TIME) {
+                                // Time is up, force the turn finalization to flip cards back and change turn
+                                if (!AppState.isProcessingTurn) { // Use a local lock to prevent multiple finalize calls
+                                    AppState.isProcessingTurn = true;
+                                    MultiplayerService.finalizeTurn(roomCode).finally(() => {
+                                        AppState.isProcessingTurn = false;
+                                    });
+                                }
+                            }
+                        }
+                        
+                        callback(roomData);
+                    } else {
+                        // Room deleted or no longer exists
+                        window.leaveRoom(true);
+                    }
+                }, (error) => {
+                    console.error("Listener error:", error);
+                    showMessage("Lost connection to the room.", '⚠️ Disconnected');
+                    window.leaveRoom(true);
+                });
+            },
         };
 
+        // --- RENDER LOGIC ---
 
-        // --- RENDERING AND UI UPDATES ---
-
+        /**
+         * Renders the entire application based on the current AppState.
+         */
         const renderApp = () => {
-            const roomArea = document.getElementById('room-area');
-            const gameContainer = document.getElementById('game-container');
-            const boardEl = document.getElementById('game-board');
-            const playersListEl = document.getElementById('players-list');
-            const chatLogEl = document.getElementById('chat-log');
-            const gameStatusEl = document.getElementById('game-status');
+            const content = document.getElementById('content');
+            content.innerHTML = '';
             
-            if (!userId) {
-                // Check if the fatal error message has already been rendered
-                if (!firebaseConfig) return; 
-
-                // Authentication still pending or failed
-                roomArea.innerHTML = `<div class="p-6 bg-yellow-600 text-white rounded-lg text-center">
-                    <p class="font-bold">Connecting to Multiplayer...</p>
-                    <p class="text-sm">Please wait while we connect you to the service.</p>
-                </div>`;
-                gameContainer.classList.add('hidden');
+            if (!isAuthReady) {
+                content.innerHTML = renderLoadingScreen();
                 return;
             }
 
-            // 1. Not in a room: Show room list/creation
-            if (!AppState.currentRoom) {
-                gameContainer.classList.add('hidden');
-                roomArea.innerHTML = `
-                    <div class="p-6 bg-gray-700 rounded-lg">
-                        <h2 class="text-2xl font-bold text-white mb-4">Join or Create Game</h2>
-                        <div class="space-y-4">
-                            <!-- Create Room -->
-                            <button onclick="window.createAndJoinRoom()" class="w-full p-3 bg-gold-600 hover:bg-gold-700 text-gray-900 font-extrabold rounded-lg transition duration-150 shadow-gold-500/50">
-                                <i class="fas fa-plus mr-2"></i> Create New Room
-                            </button>
-
-                            <!-- Join by Code -->
-                            <div class="flex space-x-2">
-                                <input type="text" id="room-code-input" placeholder="Enter 4-letter code" maxlength="4" class="flex-grow p-3 rounded-lg bg-gray-800 text-white uppercase text-center font-bold tracking-widest border border-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-400">
-                                <button onclick="window.joinRoomByInput()" class="p-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-150">
-                                    Join
-                                </button>
-                            </div>
-                            
-                            <!-- View Active Rooms -->
-                            <button onclick="window.showActiveRooms()" class="w-full p-3 bg-gray-600 hover:bg-gray-500 text-white font-bold rounded-lg transition duration-150">
-                                <i class="fas fa-list-ul mr-2"></i> View Active Rooms (${AppState.activeRooms.length})
-                            </button>
-                        </div>
-                    </div>
-                `;
-                return;
+            if (AppState.view === 'HUB' || !AppState.currentRoom) {
+                content.innerHTML = renderHub();
+            } else if (AppState.view === 'GAME' && AppState.currentRoom) {
+                content.innerHTML = renderGameScreen(AppState.currentRoom);
+                renderChat(AppState.currentRoom); // Render chat box
+                // Re-sync local card state
+                AppState.memoryCards = JSON.parse(AppState.currentRoom.board);
             }
-            
-            // 2. In a room: Show game and chat
-            gameContainer.classList.remove('hidden');
-            const room = AppState.currentRoom;
-            
-            // Room Info Bar
-            roomArea.innerHTML = `
-                <div class="flex items-center justify-between p-4 bg-gray-700 rounded-lg mb-6">
-                    <h2 class="text-xl font-bold text-white">
-                        Room: <span class="text-gold-400 tracking-widest">${room.roomCode}</span>
-                    </h2>
-                    <div class="flex space-x-3">
-                        <button onclick="window.copyRoomCode('${room.roomCode}')" class="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                        <button onclick="window.leaveRoom()" class="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold">
-                            Leave
+        };
+
+        /**
+         * Renders the loading screen.
+         */
+        const renderLoadingScreen = () => `
+            <div class="text-center p-8 bg-gray-700 rounded-xl shadow-2xl">
+                <i class="fa-solid fa-sync fa-spin text-4xl text-gold-400"></i>
+                <p class="mt-4 text-xl">Initializing Nexus...</p>
+                <p class="text-gray-400 text-sm">Awaiting authentication and connection.</p>
+            </div>
+        `;
+        
+        /**
+         * Renders the main Hub screen for creating/joining games.
+         */
+        const renderHub = () => `
+            <div class="w-full max-w-md p-6 sm:p-8 bg-gray-800 rounded-xl shadow-2xl border border-gray-700">
+                <h2 class="text-2xl font-bold mb-4 text-white">Join the Challenge</h2>
+                <p class="text-sm text-gray-400 mb-6">Your User ID: <span class="font-mono text-xs text-gold-400 break-all">${userId}</span></p>
+
+                <div class="mb-6">
+                    <button onclick="window.createAndJoinRoom()" class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition duration-200 shadow-lg shadow-green-900/50">
+                        <i class="fa-solid fa-plus mr-2"></i>Create New Advanced Game
+                    </button>
+                    <p class="text-xs text-gray-400 mt-2 text-center">6x6 Grid, Special Cards, Action Points Mode</p>
+                </div>
+
+                <div class="mb-4">
+                    <label for="room-code-input" class="block text-sm font-medium text-gray-300 mb-2">Or Join an Existing Room (4-letter code)</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="room-code-input" maxlength="4" placeholder="ABCD" class="flex-grow p-3 text-lg font-mono text-center uppercase bg-gray-700 border border-gray-600 rounded-lg focus:ring-gold-400 focus:border-gold-400 transition duration-150" oninput="this.value = this.value.toUpperCase()">
+                        <button onclick="window.handleJoinRoomClick()" class="py-3 px-4 bg-gold-600 hover:bg-gold-700 text-white font-semibold rounded-lg transition duration-200">
+                            Join
                         </button>
                     </div>
                 </div>
-            `;
+            </div>
+        `;
+        
+        /**
+         * Renders the game board and controls.
+         * @param {Object} roomData 
+         */
+        const renderGameScreen = (roomData) => {
+            const cards = JSON.parse(roomData.board);
+            const isMyTurn = roomData.currentTurn === userId;
+            const myPlayer = roomData.players[userId];
+            const gameStatus = roomData.status;
 
-            // --- Game Board Rendering ---
-            boardEl.innerHTML = ''; // Clear board
+            let statusMessage = '';
+            let statusColor = '';
             
-            const isMyTurn = room.currentPlayerId === userId;
-            const waitingForPair = room.flippedCards.length === 1;
-
-            AppState.isMyTurn = isMyTurn;
-            AppState.waitingForPair = waitingForPair;
-            
-            // Set grid columns dynamically based on number of cards
-            const totalCards = room.board.length;
-            let cols = 4;
-            if (totalCards > 16) cols = 6;
-            else if (totalCards <= 12) cols = 4;
-            else cols = 5;
-            boardEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-
-
-            room.board.forEach((card, index) => {
-                const cardEl = document.createElement('div');
-                
-                // Determine if this card is currently visible (either matched or one of the two flipped)
-                const isCurrentlyFlipped = room.flippedCards.some(f => f.id === card.id);
-                const isVisible = card.isMatched || isCurrentlyFlipped;
-
-                cardEl.className = `card aspect-square rounded-lg shadow-xl cursor-pointer ${isVisible ? 'flipped' : ''} ${card.isMatched ? 'matched' : ''}`;
-                
-                let clickHandler = `window.handleCardClick(${index}, ${isVisible})`;
-
-                // Apply a visual delay for non-matched cards that were just flipped, before they flip back
-                if (isCurrentlyFlipped && !card.isMatched && room.flippedCards.length === 2) {
-                     // If two cards are flipped and not matched, prevent further clicks until turn changes
-                     cardEl.style.pointerEvents = 'none';
-                     
-                     // If it's a miss, we'll visually flip them back after a delay (handled by CSS/State change)
-                     // In the state, they are immediately set to isFlipped=false by the 'host' logic.
-                     // The visual flip back is handled by the removal of the 'flipped' class on the next render.
-                } else if (card.isMatched) {
-                    cardEl.style.pointerEvents = 'none';
+            if (gameStatus === 'FINISHED') {
+                const winner = determineWinner(roomData);
+                statusMessage = `🏆 GAME OVER! Winner: ${winner ? winner.id.substring(0, 4) : 'TIE'}`;
+                statusColor = 'text-green-400';
+            } else if (isMyTurn) {
+                const isFrozen = Date.now() < myPlayer.frozenUntil;
+                if (isFrozen) {
+                     statusMessage = `🧊 YOU ARE FROZEN! Turn skipped (AP: 0)`;
+                     statusColor = 'text-red-400';
+                } else {
+                     statusMessage = `YOUR TURN! AP: ${myPlayer.actionPoints}`;
+                     statusColor = 'text-gold-400 current-turn-glow';
                 }
-                
-                cardEl.onclick = new Function(clickHandler);
+            } else {
+                statusMessage = `Turn: ${roomData.currentTurn.substring(0, 4)}... (Watch closely!)`;
+                statusColor = 'text-blue-400';
+            }
 
-                cardEl.innerHTML = `
-                    <div class="card-inner">
-                        <div class="card-face card-back">
-                            <i class="fas fa-question text-xl text-white"></i>
-                        </div>
-                        <div class="card-face card-front">
-                            ${card.icon}
+
+            const cardElements = cards.map((card, index) => {
+                const isFlippable = isMyTurn && !card.isMatched && !card.isFlipped && myPlayer.actionPoints > 0 && gameStatus === 'LOBBY'; // Only allow flips in LOBBY state for simplicity
+                
+                // Allow host to start the game
+                const action = gameStatus === 'LOBBY' && roomData.hostId === userId 
+                    ? `window.startGame('${roomData.roomCode}')` 
+                    : `window.handleCardClick(${index})`;
+                    
+                const cardClass = card.isMatched ? 'matched' : (card.isFlipped ? 'flipped' : '');
+                
+                // Add a hover effect only if the card is flippable
+                const hoverClass = isFlippable && roomData.flippedCards.length < 2 && !AppState.isProcessingTurn ? 'hover:scale-105 transition-transform duration-100' : 'cursor-default';
+
+                return `
+                    <div class="card-container">
+                        <div class="card ${cardClass} ${hoverClass} ${isFlippable ? 'cursor-pointer' : 'opacity-80'}" onclick="${isFlippable ? action : ''}">
+                            <div class="card-face">
+                                ${card.value}
+                                ${card.isMatched ? `<span class="absolute bottom-1 right-1 text-xs text-gray-800">P: ${card.matchedBy.substring(0, 4)}</span>` : ''}
+                            </div>
+                            <div class="card-back">
+                                <i class="fa-solid fa-question text-xl"></i>
+                            </div>
                         </div>
                     </div>
                 `;
-                boardEl.appendChild(cardEl);
-            });
+            }).join('');
             
-            // --- Status Update ---
-            if (room.status === 'finished') {
-                const winner = room.players.sort((a, b) => b.score - a.score)[0];
-                gameStatusEl.className = 'mt-4 p-3 bg-yellow-600 text-gray-900 rounded-lg text-center font-extrabold text-lg';
-                gameStatusEl.textContent = `Game Finished! Winner: ${winner.id} with ${winner.score} matches!`;
-            } else {
-                gameStatusEl.className = 'mt-4 p-3 rounded-lg text-center font-semibold transition-colors duration-300';
-                if (isMyTurn) {
-                    gameStatusEl.textContent = "🟢 Your Turn! Click a card.";
-                    gameStatusEl.classList.add('bg-green-600', 'text-white');
-                    gameStatusEl.classList.remove('bg-gray-700');
-                } else {
-                    gameStatusEl.textContent = `🔴 Waiting for ${room.currentPlayerId}'s turn.`;
-                    gameStatusEl.classList.remove('bg-green-600', 'text-white');
-                    gameStatusEl.classList.add('bg-gray-700', 'text-white');
-                }
-            }
-
-
-            // --- Player List Rendering ---
-            playersListEl.innerHTML = '';
-            document.getElementById('player-count').textContent = `(${room.players.length})`;
-            room.players.sort((a, b) => b.score - a.score).forEach(player => {
-                const isCurrentPlayer = player.id === userId;
-                const isTurnPlayer = player.id === room.currentPlayerId;
-                playersListEl.innerHTML += `
-                    <li class="flex items-center justify-between p-2 rounded-md ${isTurnPlayer ? 'bg-gold-600 text-gray-900 font-bold shadow-md' : 'bg-gray-600'}">
-                        <span class="truncate ${player.color}">
-                            ${isTurnPlayer ? '<i class="fas fa-flag mr-1"></i>' : ''}
-                            ${player.id} ${isCurrentPlayer ? '(You)' : ''}
+            const playerList = Object.values(roomData.players)
+                .sort((a, b) => a.turnOrder - b.turnOrder)
+                .map(p => `
+                    <div class="flex justify-between items-center p-2 rounded-lg ${p.id === roomData.currentTurn ? 'bg-gold-900/30 border border-gold-400' : 'bg-gray-700'}">
+                        <span class="font-bold ${p.id === userId ? 'text-gold-400' : 'text-white'}">
+                            ${p.id === userId ? 'You' : p.id.substring(0, 4)} ${p.id === roomData.hostId ? '<i class="fa-solid fa-crown text-xs ml-1"></i>' : ''}
                         </span>
-                        <span class="font-bold text-lg ${isTurnPlayer ? 'text-gray-900' : 'text-white'}">${player.score}</span>
-                    </li>
-                `;
-            });
+                        <div class="flex items-center space-x-3">
+                            <span class="text-sm font-mono text-gray-300"><i class="fa-solid fa-star text-yellow-500 mr-1"></i>${p.score}</span>
+                            <span class="text-sm font-mono ${p.actionPoints > 0 ? 'text-green-400' : 'text-red-400'}"><i class="fa-solid fa-bolt mr-1"></i>AP: ${p.actionPoints}</span>
+                            ${Date.now() < p.frozenUntil ? '<span class="text-red-500 text-xs font-bold">FROZEN</span>' : ''}
+                        </div>
+                    </div>
+                `).join('');
 
-            // --- Chat Log Rendering ---
-            if (room.chat.length !== chatLogEl.children.length) {
-                chatLogEl.innerHTML = room.chat.map(msg => {
+            return `
+                <div class="w-full max-w-5xl mx-auto flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
+                    <!-- Left Column: Game State & Board -->
+                    <div class="lg:w-3/4">
+                        <div class="bg-gray-800 p-4 sm:p-6 rounded-xl shadow-2xl border border-gray-700">
+                            <div class="flex justify-between items-center mb-4">
+                                <h2 class="text-xl font-bold ${statusColor}">${statusMessage}</h2>
+                                <div class="flex space-x-2">
+                                    <button onclick="window.copyRoomCode('${roomData.roomCode}')" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-full text-gray-300">
+                                        Room: <span class="font-mono text-gold-400">${roomData.roomCode}</span>
+                                    </button>
+                                    <button onclick="window.leaveRoom()" class="text-sm px-3 py-1 bg-red-600 hover:bg-red-700 rounded-full text-white">
+                                        <i class="fa-solid fa-door-open"></i> Leave
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            ${gameStatus === 'LOBBY' && roomData.hostId === userId ? 
+                                `
+                                <div class="text-center my-6 p-4 border border-blue-500/50 rounded-lg bg-blue-900/20">
+                                    <p class="text-blue-300 mb-2">Game is in LOBBY status. Waiting for players...</p>
+                                    <button onclick="window.startGame('${roomData.roomCode}')" class="py-2 px-6 bg-gold-600 hover:bg-gold-700 text-white font-semibold rounded-lg transition duration-200">
+                                        <i class="fa-solid fa-play mr-2"></i>Start Game (Host Only)
+                                    </button>
+                                </div>
+                                ` 
+                            : ''}
+                            
+                            ${gameStatus === 'FINISHED' ? renderEndGame(roomData) : `<div id="game-board" class="mt-4">${cardElements}</div>`}
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Players & Chat -->
+                    <div class="lg:w-1/4 flex flex-col space-y-6">
+                        <!-- Player List -->
+                        <div class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700">
+                            <h3 class="text-xl font-bold mb-3 text-gold-400">Players (${Object.keys(roomData.players).length})</h3>
+                            <div class="space-y-2">
+                                ${playerList}
+                            </div>
+                        </div>
+
+                        <!-- Chat Box -->
+                        <div class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700 flex-grow flex flex-col h-64 lg:h-full min-h-[300px]">
+                            <h3 class="text-xl font-bold mb-3 text-gold-400">Chat</h3>
+                            <div id="chat-messages" class="flex-grow overflow-y-auto space-y-2 mb-3 pr-2 text-sm">
+                                <!-- Chat messages injected here -->
+                            </div>
+                            <form onsubmit="window.sendChat(event)" class="flex">
+                                <input type="text" id="chat-input" placeholder="Say something..." class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-l-lg text-white text-sm focus:ring-gold-400 focus:border-gold-400" required>
+                                <button type="submit" class="p-2 bg-blue-600 hover:bg-blue-700 rounded-r-lg text-white">
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+        
+        /**
+         * Renders the end-game screen with results.
+         * @param {Object} roomData 
+         */
+        const renderEndGame = (roomData) => {
+            const results = Object.values(roomData.players)
+                .sort((a, b) => b.score - a.score); // Sort by score descending
+            
+            const winner = determineWinner(roomData);
+            
+            const playerResults = results.map((p, index) => {
+                const isWinner = winner && winner.id === p.id;
+                const podiumClass = index === 0 ? 'bg-green-800/50' : (index === 1 ? 'bg-blue-800/50' : 'bg-gray-700/50');
+                return `
+                    <div class="flex justify-between items-center p-3 rounded-lg ${podiumClass}">
+                        <span class="font-bold text-lg ${isWinner ? 'text-gold-400' : 'text-white'}">
+                            ${isWinner ? '🥇 ' : (index + 1) + '. '}${p.id === userId ? 'You' : p.id.substring(0, 4)}
+                        </span>
+                        <span class="text-xl font-extrabold text-gold-400">${p.score} <span class="text-sm text-gray-400">pairs</span></span>
+                    </div>
+                `;
+            }).join('');
+            
+            return `
+                <div class="text-center p-8 bg-gray-700 rounded-xl my-4">
+                    <i class="fa-solid fa-trophy text-6xl text-gold-400 mb-4"></i>
+                    <h2 class="text-4xl font-extrabold text-white mb-2">${winner ? winner.id === userId ? 'VICTORY!' : 'GAME OVER' : 'TIE!'}</h2>
+                    <p class="text-gray-300 text-lg mb-6">${winner ? `Player ${winner.id.substring(0, 4)} won with ${winner.score} pairs.` : 'The game ended in a tie!'}</p>
+                    
+                    <div class="max-w-xs mx-auto space-y-2">
+                        ${playerResults}
+                    </div>
+                    
+                    <button onclick="window.leaveRoom()" class="mt-8 py-2 px-6 bg-gold-600 hover:bg-gold-700 text-white font-semibold rounded-lg transition duration-200">
+                        Back to Hub
+                    </button>
+                </div>
+            `;
+        };
+        
+        /**
+         * Determines the winner of the game.
+         * @param {Object} roomData 
+         * @returns {Object|null} The winner's player object, or null for a tie.
+         */
+        const determineWinner = (roomData) => {
+             const players = Object.values(roomData.players);
+             if (players.length === 0) return null;
+             
+             players.sort((a, b) => b.score - a.score);
+             
+             if (players.length > 1 && players[0].score === players[1].score) {
+                 return null; // It's a tie
+             }
+             return players[0];
+        };
+        
+        /**
+         * Renders the chat messages.
+         * @param {Object} roomData 
+         */
+        const renderChat = (roomData) => {
+            const chatMessagesDiv = document.getElementById('chat-messages');
+            if (!chatMessagesDiv) return;
+
+            // Only render new messages to prevent flicker/re-scroll
+            const currentMessages = Array.from(chatMessagesDiv.children).map(el => el.dataset.time);
+            
+            roomData.chat.forEach(msg => {
+                const timestamp = msg.timestamp?.toDate()?.getTime() || Date.now();
+                if (!currentMessages.includes(String(timestamp))) {
                     const isSystem = msg.sender === 'SYSTEM';
                     const isMe = msg.sender === userId;
-                    const senderClass = isSystem ? 'text-yellow-400' : (isMe ? 'text-blue-400' : 'text-red-400');
-                    const senderName = isSystem ? 'System' : (isMe ? 'You' : msg.sender);
-                    return `<p><span class="font-semibold ${senderClass}">${senderName}:</span> ${msg.message}</p>`;
-                }).join('');
-                // Scroll to bottom
-                chatLogEl.scrollTop = chatLogEl.scrollHeight;
-            }
-            
-            // --- Process Match Requests (runs only if I'm the designated "host" or first player) ---
-            if (room.players.length > 0 && room.players[0].id === userId && room.matchRequests.length > 0) {
-                 const updateData = processMatchRequests(room);
-                 if (updateData) {
-                    const roomRef = doc(db, ROOM_COLLECTION, room.roomCode);
-                    updateDoc(roomRef, updateData).catch(e => {
-                        console.error("Error processing match request:", e);
-                    });
-                 } else {
-                     // If updateData is null, it means the request was invalid (e.g., card already flipped).
-                     // We still need to clear the request queue.
-                     const roomRef = doc(db, ROOM_COLLECTION, room.roomCode);
-                     updateDoc(roomRef, { matchRequests: room.matchRequests.slice(1) }).catch(e => {
-                         console.error("Error clearing invalid match request:", e);
-                     });
-                 }
-            }
-        };
+                    const senderDisplay = isSystem ? 'System' : (isMe ? 'You' : msg.sender.substring(0, 4));
+                    const senderColor = isSystem ? 'text-yellow-400 font-bold' : (isMe ? 'text-green-400' : 'text-blue-400');
+                    const messageClass = isSystem ? 'italic text-gray-400' : 'text-white';
 
-
-        // --- UI ACTIONS ---
-
-        window.handleCardClick = async (cardIndex, isVisible) => {
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
-            
-            if (AppState.currentRoom.status === 'finished') {
-                showMessage("The game is finished.", "Game Over");
-                return;
-            }
-            if (!AppState.isMyTurn) {
-                showMessage("It's not your turn!", "Wait");
-                return;
-            }
-            if (AppState.currentRoom.flippedCards.length >= 2) {
-                showMessage("Waiting for turn change...", "Wait");
-                return;
-            }
-            if (isVisible) {
-                showMessage("This card is already flipped or matched.", "Invalid Move");
-                return;
-            }
-
-            // Send flip request to the database
-            await MultiplayerService.flipCard(AppState.currentRoom.roomCode, cardIndex);
-        };
-        
-        window.createAndJoinRoom = async () => {
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
-            try {
-                const room = await MultiplayerService.createRoom();
-                await window.joinRoom(room.roomCode);
-                showMessage(`Created and joined room ${room.roomCode}!`, '✅ Connected');
-            } catch (e) {
-                console.error("Error creating room: ", e);
-                showMessage("Failed to create room.", '❌ Error');
-            }
-        };
-
-        window.showActiveRooms = async () => {
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
-            try {
-                // Ensure we are listening to active rooms before opening modal
-                if (!unsubscribeRooms) {
-                    MultiplayerService.listenToActiveRooms((rooms) => { 
-                        AppState.activeRooms = rooms; 
-                        renderApp(); 
-                        // Update list in modal if it's open
-                        if (!document.getElementById('room-list-modal').classList.contains('hidden')) {
-                             updateRoomListModal(rooms);
-                        }
-                    });
-                }
-                
-                const rooms = AppState.activeRooms;
-                updateRoomListModal(rooms);
-
-                document.getElementById('room-list-modal').classList.remove('hidden');
-            } catch (e) {
-                 console.error("Error fetching rooms: ", e);
-                 showMessage("Failed to load room list.", '❌ Error');
-            }
-        };
-        
-        const updateRoomListModal = (rooms) => {
-             const listEl = document.getElementById('active-rooms-list');
-             listEl.innerHTML = rooms.length === 0 
-                ? '<li class="text-gray-400">No active rooms found.</li>'
-                : rooms.map(room => `
-                    <li class="flex items-center justify-between p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition">
-                        <span class="font-bold text-white">${room.roomCode}</span>
-                        <span class="text-sm text-gray-400">${room.players.length} players</span>
-                        <button onclick="window.joinRoom('${room.roomCode}'); document.getElementById('room-list-modal').classList.add('hidden')" class="ml-4 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
-                            Join
-                        </button>
-                    </li>
-                `).join('');
-        };
-        
-        // This is the core function to establish a real-time connection to a room
-        window.joinRoom = async (code) => {
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
-            
-            if (!userId) {
-                showMessage("Not authenticated. Please wait.", '❌ Error');
-                return;
-            }
-            // First, try to join (update player list if needed)
-            try {
-                 await MultiplayerService.joinRoom(code);
-            } catch (e) {
-                 console.error("Join attempt failed:", e);
-                 showMessage(e.message, '❌ Error');
-                 return;
-            }
-
-            // Start listening to the room for real-time updates
-            MultiplayerService.listenToRoom(code, (roomData) => {
-                if (roomData) {
-                    // Simple check for new players joining/leaving
-                    if (roomData.players.length !== lastPlayerCount && lastPlayerCount !== 0) {
-                         showMessage(`Player count changed: ${roomData.players.length}`, '🔔 Update');
-                    }
-                    lastPlayerCount = roomData.players.length;
-                    
-                    AppState.currentRoom = roomData;
-                    renderApp();
-                } else if (AppState.currentRoom) {
-                    // Room was deleted
-                    window.leaveRoom();
+                    const msgElement = document.createElement('p');
+                    msgElement.dataset.time = timestamp;
+                    msgElement.className = 'break-words';
+                    msgElement.innerHTML = `<span class="${senderColor} mr-1">${senderDisplay}:</span> <span class="${messageClass}">${msg.message}</span>`;
+                    chatMessagesDiv.appendChild(msgElement);
                 }
             });
-            showMessage(`Joined room ${code}!`, '✅ Connected');
+            
+            // Auto-scroll to the bottom
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
         };
 
-        window.joinRoomByInput = async () => {
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
+        // --- WINDOW EXPOSED FUNCTIONS (UI INTERACTIONS) ---
+        
+        window.createAndJoinRoom = async () => {
+            try {
+                const roomCode = await MultiplayerService.createRoom();
+                showMessage(`Room ${roomCode} created! Waiting for players.`, '✅ Success');
+                await window.joinRoom(roomCode);
+            } catch (e) {
+                console.error("Failed to create room:", e);
+                showMessage('Could not create room. Try again.', '❌ Error');
+            }
+        };
+
+        window.handleJoinRoomClick = async () => {
             const val = document.getElementById('room-code-input').value.toUpperCase();
             if(val.length === 4) await window.joinRoom(val);
         };
 
-        window.leaveRoom = async () => {
+        window.joinRoom = async (roomCode) => {
+            await window.leaveRoom(false); // Clean up any existing listeners/state first
+            try {
+                // Ensure room exists before joining (simple read check)
+                const docSnap = await getDoc(MultiplayerService.getRoomRef(roomCode));
+                if (!docSnap.exists()) {
+                    showMessage(`Room code ${roomCode} not found.`, '❌ Error');
+                    return;
+                }
+                
+                await MultiplayerService.joinRoom(roomCode);
+                
+                // Set up the listener immediately after joining
+                unsubscribeRoom = MultiplayerService.listenToRoom(roomCode, (roomData) => {
+                    AppState.currentRoom = roomData;
+                    AppState.view = 'GAME';
+                    
+                    // Check for player count changes (e.g., someone joined)
+                    const currentPlayers = Object.keys(roomData.players).length;
+                    if (currentPlayers > lastPlayerCount) {
+                        showMessage(`Player ${Object.keys(roomData.players).pop().substring(0, 4)} joined!`, '🔔 New Player');
+                    }
+                    lastPlayerCount = currentPlayers;
+                    
+                    renderApp();
+                });
+                showMessage(`Joined room ${roomCode}.`, '🎉 Success');
+
+            } catch (error) {
+                console.error("Error joining room:", error);
+                showMessage(`Failed to join room ${roomCode}.`, '❌ Error');
+                window.leaveRoom(true);
+            }
+        };
+
+        window.leaveRoom = async (shouldRender = true) => {
+            if (AppState.currentRoom) {
+                 // Try to remove self from the room database
+                try {
+                    await MultiplayerService.leaveRoom(AppState.currentRoom.roomCode);
+                } catch (e) {
+                    console.error("Error gracefully leaving room:", e);
+                    // Continue cleanup even if DB update fails
+                }
+            }
+            
             if (unsubscribeRoom) { unsubscribeRoom(); unsubscribeRoom = null; }
             AppState.currentRoom = null;
+            AppState.view = 'HUB';
             lastPlayerCount = 0;
-            // The active rooms listener remains, so the app will return to the room selection screen automatically
-            renderApp();
-            showMessage("You left the room.", '👋 Disconnected');
+            
+            if (shouldRender) {
+                renderApp();
+                showMessage("You left the room.", '👋 Disconnected');
+            }
         };
 
         window.copyRoomCode = (code) => {
-            // Use execCommand for broader compatibility in some sandbox environments
-            const tempInput = document.createElement('input');
-            document.body.appendChild(tempInput);
-            tempInput.value = code;
-            tempInput.select();
-            document.execCommand('copy');
-            document.body.removeChild(tempInput);
-            showMessage('Room code copied to clipboard!', '📋 Copied');
+            // Using modern clipboard API for better experience
+            if (navigator.clipboard) {
+                 navigator.clipboard.writeText(code)
+                    .then(() => showMessage('Room code copied to clipboard!', '📋 Copied'))
+                    .catch(err => {
+                        console.error('Could not copy text: ', err);
+                        // Fallback: Use execCommand for broader support (especially in iframe)
+                        const tempInput = document.createElement('input');
+                        document.body.appendChild(tempInput);
+                        tempInput.value = code;
+                        tempInput.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(tempInput);
+                        showMessage('Room code copied to clipboard!', '📋 Copied');
+                    });
+            } else {
+                 // Fallback: Use execCommand
+                 const tempInput = document.createElement('input');
+                 document.body.appendChild(tempInput);
+                 tempInput.value = code;
+                 tempInput.select();
+                 document.execCommand('copy');
+                 document.body.removeChild(tempInput);
+                 showMessage('Room code copied to clipboard!', '📋 Copied');
+            }
         };
 
         window.sendChat = async (e) => {
             e.preventDefault();
-            if (!firebaseConfig) return showMessage("Multiplayer is disabled.", "Error");
-            
             const input = document.getElementById('chat-input');
             const msg = input.value;
             if(msg.trim() && AppState.currentRoom) {
                 await MultiplayerService.sendMessage(AppState.currentRoom.roomCode, msg);
                 input.value = '';
-                // The onSnapshot listener will update AppState.currentRoom and call renderApp()
+            }
+        };
+        
+        window.startGame = async (roomCode) => {
+            if (AppState.currentRoom.hostId !== userId) {
+                showMessage("Only the host can start the game.", '🚫 Unauthorized');
+                return;
+            }
+            
+             if (Object.keys(AppState.currentRoom.players).length < 2) {
+                showMessage("Need at least 2 players to start a multiplayer game.", '👥 Not Enough Players');
+                return;
+            }
+            
+            try {
+                await updateDoc(MultiplayerService.getRoomRef(roomCode), {
+                    status: 'IN_GAME',
+                    chat: arrayUnion({
+                        sender: 'SYSTEM',
+                        message: `The game has started! Player ${AppState.currentRoom.currentTurn.substring(0, 4)} goes first.`,
+                        timestamp: serverTimestamp(),
+                    }),
+                });
+            } catch (error) {
+                console.error("Error starting game:", error);
+                showMessage("Failed to start game.", '❌ Error');
+            }
+        };
+        
+        window.handleCardClick = async (cardIndex) => {
+            if (AppState.currentRoom.status !== 'IN_GAME') {
+                 showMessage("The game has not started yet.", '✋ Hold On');
+                 return;
+            }
+            if (AppState.currentRoom.currentTurn !== userId) {
+                showMessage("It's not your turn.", '🚫 Wait');
+                return;
+            }
+            if (AppState.isProcessingTurn || AppState.currentRoom.flippedCards.length >= 2) {
+                // Ignore clicks if a match/mismatch is being processed
+                return;
+            }
+            
+            // Local lock for immediate UI feedback before transaction
+            AppState.isProcessingTurn = true;
+            try {
+                await MultiplayerService.flipCard(cardIndex);
+            } catch (e) {
+                // If transaction failed, re-enable clicks and show error
+                showMessage(e.message || "An error occurred during the flip.", '⚠️ Failed Move');
+            } finally {
+                // Unlock after API call completes (successful or failed)
+                AppState.isProcessingTurn = false;
             }
         };
 
-        // Initialize the application, which handles Firebase setup and authentication
-        initApp();
+        // --- AUTHENTICATION & INITIALIZATION ---
         
+        const initApp = async () => {
+            try {
+                // 1. Authenticate the user
+                const auth = getAuth(app);
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 2. Set up Auth State Listener
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        console.log("Authenticated with UID:", userId);
+                        
+                        // 3. Initial Render
+                        window.loadGame('HUB'); // Load the HUB view once authenticated
+                    } else {
+                        userId = null;
+                        isAuthReady = true; // Still ready, just unauthenticated (shouldn't happen with the token/anon flow)
+                        console.log("Authentication failed or logged out.");
+                        renderApp();
+                    }
+                });
+
+            } catch (error) {
+                console.error("Authentication failed during startup:", error);
+                // Handle critical startup failure
+                isAuthReady = true;
+                renderApp();
+            }
+        };
+        
+        window.loadGame = (view) => {
+            AppState.view = view;
+            renderApp();
+        };
+
+        // --- STARTUP ---
+        initApp();
     </script>
 </body>
 </html>
